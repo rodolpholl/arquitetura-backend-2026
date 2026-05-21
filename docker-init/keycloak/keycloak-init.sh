@@ -185,7 +185,7 @@ create_clients() {
         "enabled": true,
         "publicClient": true,
         "standardFlowEnabled": true,
-        "directAccessGrantsEnabled": false,
+        "directAccessGrantsEnabled": true,
         "protocol": "openid-connect",
         "redirectUris": ["http://localhost:3000/*", "http://localhost:5173/*"],
         "webOrigins": ["http://localhost:3000", "http://localhost:5173"],
