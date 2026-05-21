@@ -23,10 +23,8 @@ public static class SerilogExtensions
         builder.Host.UseSerilog((ctx, services, config) =>
         {
             // VaultKeys.LokiUrl → "grafana:loki_url" (Vault path: dev/grafana → loki_url)
-            var lokiUrl  = ctx.Configuration[VaultKeys.LokiUrl]
-                           ?? throw new InvalidOperationException(
-                               $"Secret '{VaultKeys.LokiUrl}' não encontrado no Vault (dev/grafana → loki_url). " +
-                               "Configure o Vault antes de inicializar o Serilog.");
+            // Em desenvolvimento, Loki é opcional
+            var lokiUrl  = ctx.Configuration[VaultKeys.LokiUrl];
             var ambiente = ctx.HostingEnvironment.EnvironmentName;
 
             config
@@ -47,15 +45,19 @@ public static class SerilogExtensions
                     path: $"logs/{serviceName}-.log",
                     rollingInterval: RollingInterval.Day,
                     retainedFileCountLimit: 7,
-                    formatter: new Serilog.Formatting.Compact.CompactJsonFormatter())
-                // Grafana Loki: push de logs estruturados
-                .WriteTo.GrafanaLoki(
+                    formatter: new Serilog.Formatting.Compact.CompactJsonFormatter());
+            
+            // Grafana Loki: apenas se configurado
+            if (!string.IsNullOrEmpty(lokiUrl))
+            {
+                config.WriteTo.GrafanaLoki(
                     lokiUrl,
                     labels:
                     [
                         new LokiLabel { Key = "service",  Value = serviceName },
                         new LokiLabel { Key = "ambiente", Value = ambiente }
                     ]);
+            }
         });
 
         return builder;

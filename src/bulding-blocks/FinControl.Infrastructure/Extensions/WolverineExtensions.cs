@@ -46,10 +46,10 @@ public static class WolverineExtensions
         where TDbContext : DbContext
     {
         // VaultKeys.RabbitMqUri → "rabbitmq:uri" (Vault path: dev/rabbitmq → uri)
-        var rabbitMqUri = builder.Configuration[VaultKeys.RabbitMqUri]
-                          ?? throw new InvalidOperationException(
-                              $"Secret '{VaultKeys.RabbitMqUri}' não encontrado no Vault (dev/rabbitmq → uri). " +
-                              "Certifique-se de que o Vault está configurado antes de registrar o Wolverine.");
+        var rabbitMqUri = builder.Configuration[VaultKeys.RabbitMqUri];
+        
+        // Em desenvolvimento, RabbitMQ é opcional
+        var isRabbitMqAvailable = !string.IsNullOrEmpty(rabbitMqUri);
 
         builder.Host.UseWolverine(opts =>
         {
@@ -64,10 +64,19 @@ public static class WolverineExtensions
             // dentro da mesma transação do banco — sem tabela/serviço manual de Outbox.
             opts.UseEntityFrameworkCoreTransactions();
 
-            // ── RabbitMQ transport ─────────────────────────────────────────────
-            // AutoProvision: cria exchanges e filas automaticamente se não existirem
-            opts.UseRabbitMq(new Uri(rabbitMqUri))
-                .AutoProvision();
+            // ── RabbitMQ transport (apenas se disponível) ───────────────────────
+            if (isRabbitMqAvailable)
+            {
+                opts.UseRabbitMq(new Uri(rabbitMqUri!))
+                    .AutoProvision();
+            }
+            else if (!builder.Environment.IsDevelopment())
+            {
+                throw new InvalidOperationException(
+                    $"Secret '{VaultKeys.RabbitMqUri}' não encontrado no Vault (dev/rabbitmq → uri). " +
+                    "RabbitMQ é obrigatório em produção.");
+            }
+            // Em desenvolvimento, usa apenas mediator in-process (sem RabbitMQ)
 
             // ── Descoberta de handlers ─────────────────────────────────────────
             // Wolverine varre os assemblies procurando métodos Handle/HandleAsync
@@ -78,6 +87,11 @@ public static class WolverineExtensions
             // ── Configurações adicionais do módulo ────────────────────────────
             configure?.Invoke(opts);
         });
+
+        if (builder.Environment.IsDevelopment() && !isRabbitMqAvailable)
+        {
+            Console.WriteLine("ℹ️  RabbitMQ não configurado - Wolverine rodará apenas em modo in-process (sem distribuição)");
+        }
 
         return builder;
     }

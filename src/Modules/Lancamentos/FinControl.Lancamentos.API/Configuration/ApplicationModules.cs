@@ -1,0 +1,41 @@
+using Microsoft.AspNetCore.Builder;
+
+namespace FinControl.Lancamentos.API.Configuration;
+
+/// <summary>
+/// Configuração centralizada de todos os módulos do projeto.
+/// Padrão: cada módulo deve implementar extensões AddXyzModule e MapXyzModule.
+/// </summary>
+public static class ApplicationModules
+{
+    /// <summary>
+    /// Registra todos os módulos de features da aplicação.
+    /// Inclui Wolverine, handlers, validators e endpoints.
+    /// </summary>
+    public static WebApplicationBuilder AddAllModules(this WebApplicationBuilder builder)
+    {
+        // Módulo Lancamentos - registra Wolverine, handlers, validators, endpoints
+        builder.AddLancamentosModule();
+
+        // TODO: Adicionar novos módulos aqui conforme forem criados
+        // builder.AddConsolidadosModule();
+        // builder.AddXyzModule();
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Mapeia middlewares e endpoints de todos os módulos.
+    /// </summary>
+    public static WebApplication MapAllModules(this WebApplication app)
+    {
+        // Módulo Lancamentos - mapeia middlewares e endpoints
+        app.MapLancamentosModule();
+
+        // TODO: Mapear novos módulos aqui conforme forem criados
+        // app.MapConsolidadosModule();
+        // app.MapXyzModule();
+
+        return app;
+    }
+}

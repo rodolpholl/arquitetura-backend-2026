@@ -213,6 +213,164 @@ create_clients() {
 }
 
 ################################################################################
+# Cria Protocol Mappers para incluir dados do usuário no Access Token
+# Garante que name, email, given_name, family_name apareçam no JWT
+################################################################################
+
+create_protocol_mappers() {
+    print_header "Configurando Protocol Mappers para Clients"
+
+    local clients=("fincontrol-backend" "fincontrol-frontend" "kong-client")
+
+    for client_id in "${clients[@]}"; do
+        print_info "Configurando mappers para client: ${client_id}"
+
+        # Obtém o ID do client
+        local client_uuid
+        client_uuid=$(curl -s \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${client_id}" \
+            | jq -r '.[0].id')
+
+        if [ -z "$client_uuid" ] || [ "$client_uuid" = "null" ]; then
+            print_error "Client '${client_id}' não encontrado. Pulando mappers."
+            continue
+        fi
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Mapper: User Attribute - sub (UUID)
+        # ─────────────────────────────────────────────────────────────────────
+        curl -s -X POST \
+            "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{
+                "name": "sub",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-usermodel-attribute-mapper",
+                "consentRequired": false,
+                "config": {
+                    "userinfo.token.claim": "true",
+                    "user.attribute": "id",
+                    "id.token.claim": "true",
+                    "access.token.claim": "true",
+                    "claim.name": "sub",
+                    "jsonType.label": "String"
+                }
+            }' 2>/dev/null || true
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Mapper: User Attribute - name (firstName + lastName)
+        # ─────────────────────────────────────────────────────────────────────
+        curl -s -X POST \
+            "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{
+                "name": "name",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-full-name-mapper",
+                "consentRequired": false,
+                "config": {
+                    "id.token.claim": "true",
+                    "access.token.claim": "true",
+                    "userinfo.token.claim": "true"
+                }
+            }' 2>/dev/null || true
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Mapper: User Attribute - given_name (firstName)
+        # ─────────────────────────────────────────────────────────────────────
+        curl -s -X POST \
+            "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{
+                "name": "given_name",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-usermodel-attribute-mapper",
+                "consentRequired": false,
+                "config": {
+                    "userinfo.token.claim": "true",
+                    "user.attribute": "firstName",
+                    "id.token.claim": "true",
+                    "access.token.claim": "true",
+                    "claim.name": "given_name",
+                    "jsonType.label": "String"
+                }
+            }' 2>/dev/null || true
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Mapper: User Attribute - family_name (lastName)
+        # ─────────────────────────────────────────────────────────────────────
+        curl -s -X POST \
+            "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{
+                "name": "family_name",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-usermodel-attribute-mapper",
+                "consentRequired": false,
+                "config": {
+                    "userinfo.token.claim": "true",
+                    "user.attribute": "lastName",
+                    "id.token.claim": "true",
+                    "access.token.claim": "true",
+                    "claim.name": "family_name",
+                    "jsonType.label": "String"
+                }
+            }' 2>/dev/null || true
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Mapper: User Attribute - email
+        # ─────────────────────────────────────────────────────────────────────
+        curl -s -X POST \
+            "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{
+                "name": "email",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-usermodel-property-mapper",
+                "consentRequired": false,
+                "config": {
+                    "userinfo.token.claim": "true",
+                    "user.attribute": "email",
+                    "id.token.claim": "true",
+                    "access.token.claim": "true",
+                    "claim.name": "email",
+                    "jsonType.label": "String"
+                }
+            }' 2>/dev/null || true
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Mapper: User Attribute - preferred_username (username)
+        # ─────────────────────────────────────────────────────────────────────
+        curl -s -X POST \
+            "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{
+                "name": "preferred_username",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-usermodel-property-mapper",
+                "consentRequired": false,
+                "config": {
+                    "userinfo.token.claim": "true",
+                    "user.attribute": "username",
+                    "id.token.claim": "true",
+                    "access.token.claim": "true",
+                    "claim.name": "preferred_username",
+                    "jsonType.label": "String"
+                }
+            }' 2>/dev/null || true
+
+        print_success "Mappers criados para client '${client_id}'"
+    done
+}
+
+################################################################################
 # Cria Roles no Realm
 ################################################################################
 
@@ -361,8 +519,18 @@ print_summary() {
     echo -e "  • contador.fincontrol/ Contador@123456 (fincontrol-accountant)"
     echo -e "  • readonly.fincontrol/ Readonly@123456 (fincontrol-readonly)"
     echo -e ""
+    echo -e "${GREEN}Claims no Access Token (JWT):${NC}"
+    echo -e "  ✓ sub (UUID do usuário — formato GUID)"
+    echo -e "  ✓ name (firstName + lastName)"
+    echo -e "  ✓ given_name (firstName)"
+    echo -e "  ✓ family_name (lastName)"
+    echo -e "  ✓ email"
+    echo -e "  ✓ preferred_username (username)"
+    echo -e ""
     echo -e "${GREEN}OIDC Discovery:${NC}"
     echo -e "  ${KEYCLOAK_URL}/realms/${REALM_NAME}/.well-known/openid-configuration"
+    echo -e ""
+    echo -e "${YELLOW}💡 Teste o JWT em:${NC} https://jwt.io"
 }
 
 ################################################################################
@@ -380,6 +548,7 @@ main() {
     get_admin_token
 
     create_clients
+    create_protocol_mappers
     create_roles
     create_test_users
     print_summary

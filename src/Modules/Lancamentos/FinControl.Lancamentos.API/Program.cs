@@ -1,41 +1,163 @@
+using FinControl.Infrastructure.Extensions;
+using FinControl.Infrastructure.Middleware;
+using FinControl.Infrastructure.Vault;
+using FinControl.Lancamentos.API;
+using FinControl.Lancamentos.API.Configuration;
+using FinControl.Lancamentos.Core.Context;
+using Microsoft.EntityFrameworkCore;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+// ==================== CONFIGURAÇÃO DE SECRETS (VAULT) ====================
+// ⚠️ DEVE SER PRIMEIRO: inicia o pipeline de leitura de secrets do Vault
+try
+{
+    builder.AddFinControlVault();
+}
+catch (Exception ex) when (builder.Environment.IsDevelopment())
+{
+    Console.WriteLine($"⚠️  Vault não disponível em desenvolvimento: {ex.Message}");
+}
+
+// ==================== LOGGING ====================
+try
+{
+    builder.AddFinControlSerilog("fincontrol-lancamentos");
+}
+catch (Exception ex) when (builder.Environment.IsDevelopment())
+{
+    Console.WriteLine($"⚠️  Serilog não fully configurado em desenvolvimento: {ex.Message}");
+}
+
+// ==================== OBSERVABILIDADE ====================
+try
+{
+    builder.AddFinControlObservability("fincontrol-lancamentos");
+}
+catch (Exception ex) when (builder.Environment.IsDevelopment())
+{
+    Console.WriteLine($"⚠️  Observabilidade não disponível em desenvolvimento: {ex.Message}");
+}
+
+// ==================== DATABASE ====================
+// PostgreSQL + EF Core + Outbox (Wolverine)
+builder.Services.AddDbContext<LancamentosDbContext>(opts =>
+{
+    var connectionString = builder.Configuration[VaultKeys.PostgresConnection];
+    
+    if (string.IsNullOrEmpty(connectionString) && builder.Environment.IsDevelopment())
+    {
+        // Fallback para desenvolvimento local
+        connectionString = "Host=localhost;Database=fincontrol_lancamentos;Username=postgres;Password=postgres;Port=5432";
+        Console.WriteLine($"ℹ️  Usando string de conexão padrão de desenvolvimento (PostgreSQL local)");
+    }
+    else if (string.IsNullOrEmpty(connectionString))
+    {
+        throw new InvalidOperationException(
+            $"Secret '{VaultKeys.PostgresConnection}' não encontrado no Vault (dev/postgres → connection_string).");
+    }
+
+    opts.UseNpgsql(connectionString);
+});
+
+// ==================== HEALTH CHECKS ====================
+try
+{
+    builder.Services.AddFinControlHealthChecks(
+        builder.Configuration,
+        includeRedis: !builder.Environment.IsDevelopment(),
+        includeRabbitMq: !builder.Environment.IsDevelopment());
+}
+catch (Exception ex) when (builder.Environment.IsDevelopment())
+{
+    Console.WriteLine($"⚠️  Health checks incompletos em desenvolvimento: {ex.Message}");
+}
+
+// ==================== API / OPENAPI ====================
 builder.Services.AddOpenApi();
+
+// Scalar UI para OpenAPI (alternativa moderna ao Swagger UI)
+// builder.Services.AddScalarApiReference(); // TODO: verificar método correto
+
+// ==================== TODOS OS MÓDULOS DE FEATURES ====================
+// Registra Wolverine, handlers, validators, endpoints para todos os módulos
+builder.AddAllModules();
+
+// ==================== EXCEPTION HANDLING ====================
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
+// ==================== BUILD PIPELINE HTTP ====================
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// ==================== DATABASE MIGRATIONS ====================
+// Aplica automaticamente todas as migrations pendentes no startup
+try
+{
+    using (var scope = app.Services.CreateScope())
+    {
+        var dbContext = scope.ServiceProvider.GetRequiredService<LancamentosDbContext>();
+        await dbContext.Database.MigrateAsync();
+        Console.WriteLine("✅ Migrations aplicadas com sucesso");
+    }
+}
+catch (Exception ex) when (!app.Environment.IsProduction())
+{
+    Console.WriteLine($"⚠️  Erro ao aplicar migrations em desenvolvimento: {ex.Message}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"❌ ERRO CRÍTICO ao aplicar migrations em produção: {ex.Message}");
+    throw;
+}
+
+// ==================== MIDDLEWARES HTTP ====================
+
+// 1. Request Logging (Serilog) — DEVE SER PRIMEIRO para capturar latência total
+try
+{
+    app.UseFinControlRequestLogging();
+}
+catch
+{
+    // Se Serilog não foi configurado, continua sem
+}
+
+// 2. HTTPS Redirect
+app.UseHttpsRedirection();
+
+// 3. Observabilidade (OpenTelemetry Traces + Prometheus Metrics)
+try
+{
+    app.UseFinControlObservability();
+}
+catch
+{
+    // Se observabilidade não foi configurada, continua sem
+}
+
+// 4. Exception Handler Global (RFC 7807 ProblemDetails)
+app.UseExceptionHandler();
+
+// ==================== HEALTH CHECKS ====================
+// Endpoints: /health (liveness), /health/ready (readiness)
+app.MapHealthChecks("/health");
+app.MapHealthChecks("/health/ready");
+
+// ==================== ENDPOINTS ====================
+
+// Development: OpenAPI + Swagger UI
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    // app.MapScalarApiReference(); // TODO: verificar configuração do Scalar
 }
 
-app.UseHttpsRedirection();
+// Endpoints de todos os módulos (descobertos automaticamente pelo Wolverine)
+app.MapAllModules();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
-
+// ==================== RUN ====================
+Console.WriteLine($"\n🚀 Aplicação iniciando em modo: {(app.Environment.IsDevelopment() ? "DESENVOLVIMENTO" : "PRODUÇÃO")}\n");
 app.Run();
 
-sealed record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}

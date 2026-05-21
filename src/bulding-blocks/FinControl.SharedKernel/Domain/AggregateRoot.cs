@@ -1,6 +1,6 @@
 namespace FinControl.SharedKernel.Domain;
 
-public abstract class AggregateRoot<TId> : Entity<TId> where TId : notnull
+public abstract class AggregateRoot<TId> : DomainEntity<TId> where TId : notnull
 {
     private readonly List<DomainEvent> _domainEvents = [];
 
