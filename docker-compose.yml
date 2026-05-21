@@ -3,7 +3,7 @@ services:
   # Suporta múltiplos databases e schemas para diferentes serviços
   postgres:
     image: postgres:16-alpine
-    container_name: agile-postgres
+    container_name: fincontrol-postgres
     environment:
       POSTGRES_USER: agile_admin
       POSTGRES_PASSWORD: agile_dev_password_123
@@ -15,7 +15,7 @@ services:
       - ./postgres_data:/var/lib/postgresql/data
       - ./docker-init/postgres:/docker-entrypoint-initdb.d
     networks:
-      - agile-network
+      - fincontrol-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agile_admin"]
       interval: 5s
@@ -37,14 +37,14 @@ services:
   # Redis - Cache distribuído
   redis:
     image: redis:7-alpine
-    container_name: agile-redis
+    container_name: fincontrol-redis
     command: redis-server --appendonly yes --requirepass agile_redis_password_123
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
-      - agile-network
+      - fincontrol-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -65,7 +65,7 @@ services:
   # RabbitMQ - Message Broker nativo do Wolverine
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
-    container_name: agile-rabbitmq
+    container_name: fincontrol-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: agile_user
       RABBITMQ_DEFAULT_PASS: agile_rabbitmq_password_123
@@ -77,7 +77,7 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
       - ./docker-init/rabbitmq:/etc/rabbitmq
     networks:
-      - agile-network
+      - fincontrol-network
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -98,7 +98,7 @@ services:
   # HashiCorp Vault - Secrets Management (Dev Mode)
   vault:
     image: hashicorp/vault:1.15
-    container_name: agile-vault
+    container_name: fincontrol-vault
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: agile_dev_token_12345
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
@@ -108,7 +108,7 @@ services:
     volumes:
       - vault_data:/vault/file
     networks:
-      - agile-network
+      - fincontrol-network
     cap_add:
       - IPC_LOCK
     entrypoint: sh -c "apk add --no-cache curl && vault server -dev -dev-root-token-id=agile_dev_token_12345"
@@ -133,7 +133,7 @@ services:
   # Vault Init - Inicializa secrets no Vault após startup
   vault-init:
     image: alpine:3.19
-    container_name: agile-vault-init
+    container_name: fincontrol-vault-init
     depends_on:
       vault:
         condition: service_healthy
@@ -144,7 +144,7 @@ services:
     volumes:
       - ./docker-init/vault/init-vault.sh:/scripts/init-vault.sh:ro
     networks:
-      - agile-network
+      - fincontrol-network
     entrypoint: /bin/sh
     command:
       - -c
@@ -165,7 +165,7 @@ services:
   # Jaeger - Distributed Tracing (OpenTelemetry)
   jaeger:
     image: jaegertracing/all-in-one:latest
-    container_name: agile-jaeger
+    container_name: fincontrol-jaeger
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
@@ -176,9 +176,9 @@ services:
     volumes:
       - jaeger_data:/badger
     networks:
-      - agile-network
+      - fincontrol-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:16686/"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:16686/ || exit 1"]
       interval: 5s
       timeout: 10s
       retries: 10
@@ -198,7 +198,7 @@ services:
   # Prometheus - Coleta de Métricas
   prometheus:
     image: prom/prometheus:latest
-    container_name: agile-prometheus
+    container_name: fincontrol-prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -209,9 +209,9 @@ services:
       - ./docker-init/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     networks:
-      - agile-network
+      - fincontrol-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 10
@@ -231,7 +231,7 @@ services:
   # Grafana - Dashboards de Visualização
   grafana:
     image: grafana/grafana:latest
-    container_name: agile-grafana
+    container_name: fincontrol-grafana
     environment:
       GF_SECURITY_ADMIN_PASSWORD: agile_grafana_password_123
       GF_USERS_ALLOW_SIGN_UP: "false"
@@ -242,7 +242,7 @@ services:
       - grafana_data:/var/lib/grafana
       - ./docker-init/grafana/provisioning:/etc/grafana/provisioning:ro
     networks:
-      - agile-network
+      - fincontrol-network
     depends_on:
       prometheus:
         condition: service_healthy
@@ -267,7 +267,7 @@ services:
   # Keycloak - Identity & Access Management (OAuth 2.0 / OpenID Connect)
   keycloak:
     image: keycloak/keycloak:latest
-    container_name: agile-keycloak
+    container_name: fincontrol-keycloak
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: agile_keycloak_password_123
@@ -282,22 +282,24 @@ services:
       KC_HOSTNAME_STRICT: "false"
       KC_LOG_LEVEL: info
       KC_PROXY: edge
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
     ports:
       - "8081:8080"
     volumes:
       - keycloak_data:/opt/keycloak/data
     networks:
-      - agile-network
+      - fincontrol-network
     depends_on:
       postgres:
         condition: service_healthy
     command:
       - start-dev
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      test: ["CMD-SHELL", "(echo > /dev/tcp/localhost/8080) 2>/dev/null && exit 0 || exit 1"]
       interval: 5s
       timeout: 15s
-      retries: 15
+      retries: 20
       start_period: 60s
     restart: unless-stopped
     logging:
@@ -314,7 +316,7 @@ services:
   # Kong - API Gateway (Rate Limiting, Authentication, Routing)
   kong:
     image: kong:3.4
-    container_name: agile-kong
+    container_name: fincontrol-kong
     environment:
       KONG_DATABASE: postgres
       KONG_PG_HOST: postgres
@@ -336,13 +338,13 @@ services:
     volumes:
       - kong_data:/var/lib/kong
     networks:
-      - agile-network
+      - fincontrol-network
     depends_on:
       postgres:
         condition: service_healthy
     command: sh -c "kong migrations bootstrap --force || true && kong start"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/status"]
+      test: ["CMD", "bash", "-c", "(echo > /dev/tcp/localhost/8001) 2>/dev/null && exit 0 || exit 1"]
       interval: 5s
       timeout: 15s
       retries: 15
@@ -359,19 +361,57 @@ services:
           cpus: '1'
           memory: 512M
 
+  # Keycloak-Init - Configura Realm, Clients, Roles e Usuários no Keycloak
+  keycloak-init:
+    image: alpine:3.19
+    container_name: fincontrol-keycloak-init
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      vault-init:
+        condition: service_completed_successfully
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_USER: admin
+      KEYCLOAK_PASSWORD: agile_keycloak_password_123
+      REALM_NAME: fincontrol
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: agile_dev_token_12345
+      VAULT_ENV: dev
+    volumes:
+      - ./docker-init/keycloak:/scripts:ro
+    networks:
+      - fincontrol-network
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        echo "📦 Instalando dependências..."
+        apk add --no-cache bash curl jq
+        echo "🔐 Inicializando Keycloak..."
+        /bin/bash /scripts/keycloak-init.sh
+        echo "✅ Keycloak inicializado com sucesso!"
+    restart: no
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   # Kong-Init - Configurar Kong com Keycloak OIDC
   kong-init:
     image: alpine:3.19
-    container_name: agile-kong-init
+    container_name: fincontrol-kong-init
     depends_on:
       kong:
         condition: service_healthy
-      keycloak:
-        condition: service_healthy
+      keycloak-init:
+        condition: service_completed_successfully
     volumes:
       - ./docker-init/kong:/scripts:ro
     networks:
-      - agile-network
+      - fincontrol-network
     entrypoint: /bin/sh
     command:
       - -c
@@ -408,7 +448,7 @@ volumes:
     driver: local
 
 networks:
-  agile-network:
+  fincontrol-network:
     driver: bridge
     ipam:
       config:

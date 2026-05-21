@@ -2,7 +2,7 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    monitor: 'agile-workers-monitor'
+    monitor: 'fincontrol-monitor'
 
 alerting:
   alertmanagers:
@@ -48,7 +48,7 @@ scrape_configs:
 
   # API Application (quando estiver rodando)
   # Descomentar quando a aplicação .NET estiver em execução
-  # - job_name: 'agile-api'
+  # - job_name: 'fincontrol-api'
   #   static_configs:
   #     - targets: ['localhost:5000', 'localhost:5001']
   #   metrics_path: '/metrics'

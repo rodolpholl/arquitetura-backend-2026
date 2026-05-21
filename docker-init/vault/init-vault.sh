@@ -186,6 +186,25 @@ main() {
         "admin_username=admin"
     echo ""
     
+    # Keycloak
+    echo -e "${CYAN}🔐 Keycloak${NC}"
+    create_secret "keycloak" \
+        "realm=agile" \
+        "url=http://keycloak:8080" \
+        "admin_username=admin" \
+        "admin_password=agile_keycloak_password_123" \
+        "issuer=http://keycloak:8080/realms/agile" \
+        "jwks_uri=http://keycloak:8080/realms/agile/protocol/openid-connect/certs" \
+        "kong_client_id=kong-client" \
+        "kong_client_secret=kong-secret" \
+        "api_client_id=fincontrol-api" \
+        "api_client_secret=fincontrol-api-secret" \
+        "dev_user=dev.user" \
+        "dev_user_password=Dev@123456!" \
+        "dev_admin=dev.admin" \
+        "dev_admin_password=Admin@123456!"
+    echo ""
+    
     # Vault
     echo -e "${CYAN}🔑 Vault${NC}"
     create_secret "vault" \
@@ -195,7 +214,7 @@ main() {
     # Verificar Secrets Criados
     print_header "Verificando Secrets Criados"
     
-    for secret in postgres redis rabbitmq grafana vault; do
+    for secret in postgres redis rabbitmq grafana keycloak vault; do
         echo -e "${CYAN}📋 Lendo: secret/${VAULT_ENV}/${secret}${NC}"
         
         response=$(read_secret "$secret")
