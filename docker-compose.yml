@@ -111,12 +111,13 @@ services:
       - agile-network
     cap_add:
       - IPC_LOCK
-    entrypoint: vault server -dev -dev-root-token-id=agile_dev_token_12345
+    entrypoint: sh -c "apk add --no-cache curl && vault server -dev -dev-root-token-id=agile_dev_token_12345"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8200/v1/sys/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -128,6 +129,38 @@ services:
         limits:
           cpus: '0.5'
           memory: 256M
+
+  # Vault Init - Inicializa secrets no Vault após startup
+  vault-init:
+    image: alpine:3.19
+    container_name: agile-vault-init
+    depends_on:
+      vault:
+        condition: service_healthy
+    environment:
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: agile_dev_token_12345
+      VAULT_ENV: dev
+    volumes:
+      - ./docker-init/vault/init-vault.sh:/scripts/init-vault.sh:ro
+    networks:
+      - agile-network
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        echo "📦 Instalando dependências..."
+        apk add --no-cache bash curl
+        echo "🔐 Iniciando Vault..."
+        /bin/bash /scripts/init-vault.sh
+        echo "✅ Vault inicializado com sucesso!"
+    restart: no
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
 
   # Jaeger - Distributed Tracing (OpenTelemetry)
   jaeger:
@@ -146,9 +179,10 @@ services:
       - agile-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:16686/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -261,9 +295,9 @@ services:
       - start-dev
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
+      interval: 5s
+      timeout: 15s
+      retries: 15
       start_period: 60s
     restart: unless-stopped
     logging:
@@ -309,9 +343,9 @@ services:
     command: sh -c "kong migrations bootstrap --force || true && kong start"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/status"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
+      interval: 5s
+      timeout: 15s
+      retries: 15
       start_period: 45s
     restart: unless-stopped
     logging:
@@ -327,7 +361,7 @@ services:
 
   # Kong-Init - Configurar Kong com Keycloak OIDC
   kong-init:
-    image: curlimages/curl:latest
+    image: alpine:3.19
     container_name: agile-kong-init
     depends_on:
       kong:
@@ -338,8 +372,17 @@ services:
       - ./docker-init/kong:/scripts:ro
     networks:
       - agile-network
-    command: /bin/sh /scripts/kong-init.sh
-    restart: on-failure
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        echo "📦 Instalando dependências..."
+        apk add --no-cache bash curl
+        echo "🔗 Configurando Kong com Keycloak..."
+        /bin/bash /scripts/kong-init.sh
+        echo "✅ Kong OIDC configurado com sucesso!"
+    restart: no
     logging:
       driver: "json-file"
       options:
