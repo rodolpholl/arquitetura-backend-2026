@@ -1,0 +1,54 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'agile-workers-monitor'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # RabbitMQ (Management Plugin expõe métricas em /metrics)
+  - job_name: 'rabbitmq'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['rabbitmq:15672']
+    basic_auth:
+      username: 'agile_user'
+      password: 'agile_rabbitmq_password_123'
+
+  # PostgreSQL (via postgres_exporter - opcional)
+  # Descomentar se postgres_exporter for adicionado
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres_exporter:9187']
+
+  # Redis (via redis_exporter - opcional)
+  # Descomentar se redis_exporter for adicionado
+  # - job_name: 'redis'
+  #   static_configs:
+  #     - targets: ['redis_exporter:9121']
+
+  # Jaeger (opcional)
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['jaeger:14269']
+
+  # API Application (quando estiver rodando)
+  # Descomentar quando a aplicação .NET estiver em execução
+  # - job_name: 'agile-api'
+  #   static_configs:
+  #     - targets: ['localhost:5000', 'localhost:5001']
+  #   metrics_path: '/metrics'

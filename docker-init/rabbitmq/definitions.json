@@ -1,0 +1,169 @@
+{
+  "rabbit_version": "3.12.0",
+  "rabbitmq_version": "3.12.0",
+  "users": [
+    {
+      "name": "agile_user",
+      "password_hash": "password_hash_placeholder",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": "administrator"
+    }
+  ],
+  "vhosts": [
+    {
+      "name": "/agile"
+    }
+  ],
+  "permissions": [
+    {
+      "user": "agile_user",
+      "vhost": "/agile",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ],
+  "topic_permissions": [],
+  "policies": [
+    {
+      "vhost": "/agile",
+      "name": "ha-all",
+      "pattern": "^(?!amq\\.).*",
+      "apply-to": "queues",
+      "definition": {
+        "ha-mode": "all",
+        "ha-sync-batch-size": 5,
+        "ha-sync-mode": "automatic"
+      },
+      "priority": 0
+    }
+  ],
+  "queues": [
+    {
+      "name": "lancamentos.registered",
+      "vhost": "/agile",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 604800000,
+        "x-dead-letter-exchange": "lancamentos.dlx"
+      }
+    },
+    {
+      "name": "consolidado.updated",
+      "vhost": "/agile",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 604800000,
+        "x-dead-letter-exchange": "consolidado.dlx"
+      }
+    },
+    {
+      "name": "lancamentos.dlq",
+      "vhost": "/agile",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 2592000000
+      }
+    },
+    {
+      "name": "consolidado.dlq",
+      "vhost": "/agile",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 2592000000
+      }
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "lancamentos.events",
+      "vhost": "/agile",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "consolidado.events",
+      "vhost": "/agile",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "lancamentos.dlx",
+      "vhost": "/agile",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "consolidado.dlx",
+      "vhost": "/agile",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "source": "lancamentos.events",
+      "destination": "lancamentos.registered",
+      "destination_type": "queue",
+      "routing_key": "lancamento.criado",
+      "vhost": "/agile",
+      "arguments": {}
+    },
+    {
+      "source": "lancamentos.events",
+      "destination": "lancamentos.registered",
+      "destination_type": "queue",
+      "routing_key": "lancamento.atualizado",
+      "vhost": "/agile",
+      "arguments": {}
+    },
+    {
+      "source": "consolidado.events",
+      "destination": "consolidado.updated",
+      "destination_type": "queue",
+      "routing_key": "consolidado.diario.atualizado",
+      "vhost": "/agile",
+      "arguments": {}
+    },
+    {
+      "source": "consolidado.events",
+      "destination": "consolidado.updated",
+      "destination_type": "queue",
+      "routing_key": "consolidado.mensal.atualizado",
+      "vhost": "/agile",
+      "arguments": {}
+    },
+    {
+      "source": "lancamentos.dlx",
+      "destination": "lancamentos.dlq",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "vhost": "/agile",
+      "arguments": {}
+    },
+    {
+      "source": "consolidado.dlx",
+      "destination": "consolidado.dlq",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "vhost": "/agile",
+      "arguments": {}
+    }
+  ]
+}
