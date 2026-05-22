@@ -10,6 +10,8 @@ namespace FinControl.Infrastructure.Vault;
 ///
 ///   secrets > secret > dev/
 ///   ├── dev/grafana      → loki_url, otlp_endpoint, prometheus_pushgateway
+///   ├── dev/keycloak     → realm, url, issuer, jwks_uri, kong_client_id, kong_client_secret,
+///   │                       api_client_id, api_client_secret
 ///   ├── dev/postgres     → connection_string
 ///   ├── dev/rabbitmq     → uri
 ///   ├── dev/redis        → connection_string
@@ -43,10 +45,11 @@ namespace FinControl.Infrastructure.Vault;
 /// ────────────────────────────────────────────────────────────────────────────
 /// SETUP VAULT CLI (ambiente dev)
 /// ────────────────────────────────────────────────────────────────────────────
-///   vault kv put secret/dev/postgres   connection_string="Host=postgres;Database=fincontrol;Username=admin;Password=..."
-///   vault kv put secret/dev/redis      connection_string="redis:6379,password=..."
-///   vault kv put secret/dev/rabbitmq   uri="amqp://user:pass@rabbitmq:5672"
-///   vault kv put secret/dev/grafana    loki_url="http://loki:3100" otlp_endpoint="http://tempo:4317" prometheus_pushgateway="http://pushgateway:9091"
+///   vault kv put secret/dev/postgres   connection_string="Host=postgres;Database=fincontrol_lancamentos;Username=fincontrol_admin;Password=..."
+///   vault kv put secret/dev/redis      connection_string="redis:6379,password=...,abortConnect=false"
+///   vault kv put secret/dev/rabbitmq   uri="amqp://user:pass@rabbitmq:5672/fincontrol"
+///   vault kv put secret/dev/grafana    loki_url="http://loki:3100" otlp_endpoint="http://jaeger:4317" prometheus_pushgateway="http://prometheus:9091"
+///   vault kv put secret/dev/keycloak   realm="fincontrol" url="http://keycloak:8080" issuer="..." kong_client_id="kong-client" kong_client_secret="..." api_client_id="fincontrol-api" api_client_secret="..."
 ///   vault kv put secret/dev/vault      role_id="..." secret_id="..."
 /// </summary>
 public static class VaultKeys
@@ -108,5 +111,63 @@ public static class VaultKeys
     // O path dev/vault contém as credenciais AppRole para renovação automática
     // de tokens em produção. Não exposto como constante pública — lido apenas
     // internamente pelo VaultConfigurationProvider durante o bootstrap.
+
+    // ── dev/keycloak ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Nome do realm Keycloak.
+    /// Vault path: <c>dev/keycloak</c> → key <c>realm</c>
+    /// IConfiguration: <c>keycloak:realm</c>
+    /// </summary>
+    public const string KeycloakRealm = "keycloak:realm";
+
+    /// <summary>
+    /// URL base do Keycloak. Ex: <c>http://keycloak:8080</c>
+    /// Vault path: <c>dev/keycloak</c> → key <c>url</c>
+    /// IConfiguration: <c>keycloak:url</c>
+    /// </summary>
+    public const string KeycloakUrl = "keycloak:url";
+
+    /// <summary>
+    /// Issuer OIDC do realm. Ex: <c>http://keycloak:8080/realms/fincontrol</c>
+    /// Vault path: <c>dev/keycloak</c> → key <c>issuer</c>
+    /// IConfiguration: <c>keycloak:issuer</c>
+    /// </summary>
+    public const string KeycloakIssuer = "keycloak:issuer";
+
+    /// <summary>
+    /// Endpoint JWKS para validação de tokens JWT.
+    /// Vault path: <c>dev/keycloak</c> → key <c>jwks_uri</c>
+    /// IConfiguration: <c>keycloak:jwks_uri</c>
+    /// </summary>
+    public const string KeycloakJwksUri = "keycloak:jwks_uri";
+
+    /// <summary>
+    /// Client ID do Kong para OIDC.
+    /// Vault path: <c>dev/keycloak</c> → key <c>kong_client_id</c>
+    /// IConfiguration: <c>keycloak:kong_client_id</c>
+    /// </summary>
+    public const string KeycloakKongClientId = "keycloak:kong_client_id";
+
+    /// <summary>
+    /// Client Secret do Kong para OIDC.
+    /// Vault path: <c>dev/keycloak</c> → key <c>kong_client_secret</c>
+    /// IConfiguration: <c>keycloak:kong_client_secret</c>
+    /// </summary>
+    public const string KeycloakKongClientSecret = "keycloak:kong_client_secret";
+
+    /// <summary>
+    /// Client ID da API FinControl (Swagger / M2M / testes).
+    /// Vault path: <c>dev/keycloak</c> → key <c>api_client_id</c>
+    /// IConfiguration: <c>keycloak:api_client_id</c>
+    /// </summary>
+    public const string KeycloakApiClientId = "keycloak:api_client_id";
+
+    /// <summary>
+    /// Client Secret da API FinControl.
+    /// Vault path: <c>dev/keycloak</c> → key <c>api_client_secret</c>
+    /// IConfiguration: <c>keycloak:api_client_secret</c>
+    /// </summary>
+    public const string KeycloakApiClientSecret = "keycloak:api_client_secret";
 }
 

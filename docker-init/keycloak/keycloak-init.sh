@@ -1,20 +1,20 @@
 #!/bin/bash
 
 ################################################################################
-# Inicializa o Keycloak com Realm, Clients, Roles e Usuários para FinControl
+# Inicializa o Keycloak com Realm, Clients, Roles e UsuÃ¡rios para FinControl
 #
-# Variáveis de ambiente:
-#   KEYCLOAK_URL      - URL do Keycloak (padrão: http://keycloak:8080)
-#   KEYCLOAK_USER     - Usuário admin (padrão: admin)
-#   KEYCLOAK_PASSWORD - Senha admin (padrão: agile_keycloak_password_123)
-#   REALM_NAME        - Nome do realm (padrão: fincontrol)
+# VariÃ¡veis de ambiente:
+#   KEYCLOAK_URL      - URL do Keycloak (padrÃ£o: http://keycloak:8080)
+#   KEYCLOAK_USER     - UsuÃ¡rio admin (padrÃ£o: admin)
+#   KEYCLOAK_PASSWORD - Senha admin (padrÃ£o: fincontrol_keycloak_password_123)
+#   REALM_NAME        - Nome do realm (padrÃ£o: fincontrol)
 ################################################################################
 
 set -euo pipefail
 
 KEYCLOAK_URL="${KEYCLOAK_URL:-http://keycloak:8080}"
 KEYCLOAK_USER="${KEYCLOAK_USER:-admin}"
-KEYCLOAK_PASSWORD="${KEYCLOAK_PASSWORD:-agile_keycloak_password_123}"
+KEYCLOAK_PASSWORD="${KEYCLOAK_PASSWORD:-fincontrol_keycloak_password_123}"
 REALM_NAME="${REALM_NAME:-fincontrol}"
 
 # Cores para output
@@ -25,17 +25,17 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 print_header() {
-    echo -e "\n${CYAN}════════════════════════════════════════════════════════${NC}"
+    echo -e "\n${CYAN}â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•${NC}"
     echo -e "${CYAN}  $1${NC}"
-    echo -e "${CYAN}════════════════════════════════════════════════════════${NC}\n"
+    echo -e "${CYAN}â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•${NC}\n"
 }
-print_info()    { echo -e "${CYAN}ℹ${NC}  $1"; }
-print_success() { echo -e "${GREEN}✓${NC}  $1"; }
-print_error()   { echo -e "${RED}✗${NC}  $1"; }
-print_warning() { echo -e "${YELLOW}⚠${NC}  $1"; }
+print_info()    { echo -e "${CYAN}â„¹${NC}  $1"; }
+print_success() { echo -e "${GREEN}âœ“${NC}  $1"; }
+print_error()   { echo -e "${RED}âœ—${NC}  $1"; }
+print_warning() { echo -e "${YELLOW}âš ${NC}  $1"; }
 
 ################################################################################
-# Aguarda Keycloak ficar totalmente pronto (endpoint /realms/master acessível)
+# Aguarda Keycloak ficar totalmente pronto (endpoint /realms/master acessÃ­vel)
 ################################################################################
 
 wait_for_keycloak() {
@@ -46,18 +46,18 @@ wait_for_keycloak() {
     until curl -s -f -o /dev/null "${KEYCLOAK_URL}/realms/master"; do
         attempt=$((attempt + 1))
         if [ $attempt -ge $max_attempts ]; then
-            print_error "Keycloak não ficou pronto após ${max_attempts} tentativas."
+            print_error "Keycloak nÃ£o ficou pronto apÃ³s ${max_attempts} tentativas."
             exit 1
         fi
-        echo "  Tentativa ${attempt}/${max_attempts} — aguardando..."
+        echo "  Tentativa ${attempt}/${max_attempts} â€” aguardando..."
         sleep 3
     done
 
-    print_success "Keycloak está pronto!"
+    print_success "Keycloak estÃ¡ pronto!"
 }
 
 ################################################################################
-# Obtém token de acesso do admin via password grant
+# ObtÃ©m token de acesso do admin via password grant
 ################################################################################
 
 get_admin_token() {
@@ -83,7 +83,7 @@ get_admin_token() {
 }
 
 ################################################################################
-# Cria o Realm fincontrol se não existir
+# Cria o Realm fincontrol se nÃ£o existir
 ################################################################################
 
 create_realm() {
@@ -95,7 +95,7 @@ create_realm() {
         "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}")
 
     if [ "$status" = "200" ]; then
-        print_warning "Realm '${REALM_NAME}' já existe. Pulando criação."
+        print_warning "Realm '${REALM_NAME}' jÃ¡ existe. Pulando criaÃ§Ã£o."
         return 0
     fi
 
@@ -134,14 +134,14 @@ create_client() {
     local client_id="$1"
     local client_payload="$2"
 
-    # Verifica se já existe
+    # Verifica se jÃ¡ existe
     local existing
     existing=$(curl -s \
         -H "Authorization: Bearer ${ADMIN_TOKEN}" \
         "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${client_id}" | jq length)
 
     if [ "$existing" -gt "0" ]; then
-        print_warning "Client '${client_id}' já existe. Pulando."
+        print_warning "Client '${client_id}' jÃ¡ existe. Pulando."
         return 0
     fi
 
@@ -160,11 +160,11 @@ create_client() {
 create_clients() {
     print_header "Criando Clients"
 
-    # Backend confidential client (microserviços .NET)
+    # Backend confidential client (microserviÃ§os .NET)
     create_client "fincontrol-backend" '{
         "clientId": "fincontrol-backend",
         "name": "FinControl Backend",
-        "description": "Client para microserviços .NET do FinControl",
+        "description": "Client para microserviÃ§os .NET do FinControl",
         "enabled": true,
         "clientAuthenticatorType": "client-secret",
         "secret": "fincontrol-backend-secret-12345",
@@ -181,7 +181,7 @@ create_clients() {
     create_client "fincontrol-frontend" '{
         "clientId": "fincontrol-frontend",
         "name": "FinControl Frontend",
-        "description": "Client público para SPA e apps mobile",
+        "description": "Client pÃºblico para SPA e apps mobile",
         "enabled": true,
         "publicClient": true,
         "standardFlowEnabled": true,
@@ -213,8 +213,8 @@ create_clients() {
 }
 
 ################################################################################
-# Cria Protocol Mappers para incluir dados do usuário no Access Token
-# Garante que name, email, given_name, family_name apareçam no JWT
+# Cria Protocol Mappers para incluir dados do usuÃ¡rio no Access Token
+# Garante que name, email, given_name, family_name apareÃ§am no JWT
 ################################################################################
 
 create_protocol_mappers() {
@@ -225,7 +225,7 @@ create_protocol_mappers() {
     for client_id in "${clients[@]}"; do
         print_info "Configurando mappers para client: ${client_id}"
 
-        # Obtém o ID do client
+        # ObtÃ©m o ID do client
         local client_uuid
         client_uuid=$(curl -s \
             -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -233,13 +233,13 @@ create_protocol_mappers() {
             | jq -r '.[0].id')
 
         if [ -z "$client_uuid" ] || [ "$client_uuid" = "null" ]; then
-            print_error "Client '${client_id}' não encontrado. Pulando mappers."
+            print_error "Client '${client_id}' nÃ£o encontrado. Pulando mappers."
             continue
         fi
 
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # Mapper: User Attribute - sub (UUID)
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         curl -s -X POST \
             "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
             -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -259,9 +259,9 @@ create_protocol_mappers() {
                 }
             }' 2>/dev/null || true
 
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # Mapper: User Attribute - name (firstName + lastName)
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         curl -s -X POST \
             "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
             -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -278,9 +278,9 @@ create_protocol_mappers() {
                 }
             }' 2>/dev/null || true
 
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # Mapper: User Attribute - given_name (firstName)
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         curl -s -X POST \
             "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
             -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -300,9 +300,9 @@ create_protocol_mappers() {
                 }
             }' 2>/dev/null || true
 
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # Mapper: User Attribute - family_name (lastName)
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         curl -s -X POST \
             "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
             -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -322,9 +322,9 @@ create_protocol_mappers() {
                 }
             }' 2>/dev/null || true
 
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # Mapper: User Attribute - email
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         curl -s -X POST \
             "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
             -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -344,9 +344,9 @@ create_protocol_mappers() {
                 }
             }' 2>/dev/null || true
 
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # Mapper: User Attribute - preferred_username (username)
-        # ─────────────────────────────────────────────────────────────────────
+        # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         curl -s -X POST \
             "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${client_uuid}/protocol-mappers/models" \
             -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -385,7 +385,7 @@ create_roles() {
             -o /dev/null -w "%{http_code}")
 
         if [ "$existing" = "200" ]; then
-            print_warning "Role '${role}' já existe. Pulando."
+            print_warning "Role '${role}' jÃ¡ existe. Pulando."
             continue
         fi
 
@@ -399,7 +399,7 @@ create_roles() {
 }
 
 ################################################################################
-# Cria um usuário de teste
+# Cria um usuÃ¡rio de teste
 ################################################################################
 
 create_user() {
@@ -410,18 +410,18 @@ create_user() {
     local password="$5"
     local role="$6"
 
-    # Verifica se já existe
+    # Verifica se jÃ¡ existe
     local existing
     existing=$(curl -s \
         -H "Authorization: Bearer ${ADMIN_TOKEN}" \
         "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users?username=${username}" | jq length)
 
     if [ "$existing" -gt "0" ]; then
-        print_warning "Usuário '${username}' já existe. Pulando."
+        print_warning "UsuÃ¡rio '${username}' jÃ¡ existe. Pulando."
         return 0
     fi
 
-    # Cria o usuário
+    # Cria o usuÃ¡rio
     local location
     location=$(curl -s -i -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users" \
         -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -444,7 +444,7 @@ create_user() {
     user_id=$(basename "$location")
 
     if [ -z "$user_id" ] || [ "$user_id" = "" ]; then
-        print_error "Falha ao criar usuário '${username}'"
+        print_error "Falha ao criar usuÃ¡rio '${username}'"
         return 1
     fi
 
@@ -460,18 +460,18 @@ create_user() {
             -H "Authorization: Bearer ${ADMIN_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "[{\"id\": \"${role_id}\", \"name\": \"${role}\"}]" > /dev/null
-        print_success "Usuário '${username}' criado com role '${role}'!"
+        print_success "UsuÃ¡rio '${username}' criado com role '${role}'!"
     else
-        print_success "Usuário '${username}' criado (sem role atribuída)!"
+        print_success "UsuÃ¡rio '${username}' criado (sem role atribuÃ­da)!"
     fi
 }
 
 ################################################################################
-# Cria Usuários de Teste
+# Cria UsuÃ¡rios de Teste
 ################################################################################
 
 create_test_users() {
-    print_header "Criando Usuários de Teste"
+    print_header "Criando UsuÃ¡rios de Teste"
 
     create_user "admin.fincontrol" \
         "admin@fincontrol.local" \
@@ -503,38 +503,38 @@ create_test_users() {
 ################################################################################
 
 print_summary() {
-    print_header "✅ Keycloak Inicializado com Sucesso!"
+    print_header "âœ… Keycloak Inicializado com Sucesso!"
 
     echo -e "${GREEN}Realm:${NC}        ${REALM_NAME}"
     echo -e "${GREEN}URL Admin:${NC}    ${KEYCLOAK_URL}/admin/master/console/#/${REALM_NAME}"
     echo -e ""
     echo -e "${GREEN}Clients criados:${NC}"
-    echo -e "  • fincontrol-backend  (secret: fincontrol-backend-secret-12345)"
-    echo -e "  • fincontrol-frontend (public, PKCE)"
-    echo -e "  • kong-client         (secret: kong-secret)"
+    echo -e "  â€¢ fincontrol-backend  (secret: fincontrol-backend-secret-12345)"
+    echo -e "  â€¢ fincontrol-frontend (public, PKCE)"
+    echo -e "  â€¢ kong-client         (secret: kong-secret)"
     echo -e ""
-    echo -e "${GREEN}Usuários de teste:${NC}"
-    echo -e "  • admin.fincontrol   / Admin@123456    (fincontrol-admin)"
-    echo -e "  • user.fincontrol    / User@123456     (fincontrol-user)"
-    echo -e "  • contador.fincontrol/ Contador@123456 (fincontrol-accountant)"
-    echo -e "  • readonly.fincontrol/ Readonly@123456 (fincontrol-readonly)"
+    echo -e "${GREEN}UsuÃ¡rios de teste:${NC}"
+    echo -e "  â€¢ admin.fincontrol   / Admin@123456    (fincontrol-admin)"
+    echo -e "  â€¢ user.fincontrol    / User@123456     (fincontrol-user)"
+    echo -e "  â€¢ contador.fincontrol/ Contador@123456 (fincontrol-accountant)"
+    echo -e "  â€¢ readonly.fincontrol/ Readonly@123456 (fincontrol-readonly)"
     echo -e ""
     echo -e "${GREEN}Claims no Access Token (JWT):${NC}"
-    echo -e "  ✓ sub (UUID do usuário — formato GUID)"
-    echo -e "  ✓ name (firstName + lastName)"
-    echo -e "  ✓ given_name (firstName)"
-    echo -e "  ✓ family_name (lastName)"
-    echo -e "  ✓ email"
-    echo -e "  ✓ preferred_username (username)"
+    echo -e "  âœ“ sub (UUID do usuÃ¡rio â€” formato GUID)"
+    echo -e "  âœ“ name (firstName + lastName)"
+    echo -e "  âœ“ given_name (firstName)"
+    echo -e "  âœ“ family_name (lastName)"
+    echo -e "  âœ“ email"
+    echo -e "  âœ“ preferred_username (username)"
     echo -e ""
     echo -e "${GREEN}OIDC Discovery:${NC}"
     echo -e "  ${KEYCLOAK_URL}/realms/${REALM_NAME}/.well-known/openid-configuration"
     echo -e ""
-    echo -e "${YELLOW}💡 Teste o JWT em:${NC} https://jwt.io"
+    echo -e "${YELLOW}ðŸ’¡ Teste o JWT em:${NC} https://jwt.io"
 }
 
 ################################################################################
-# Execução Principal
+# ExecuÃ§Ã£o Principal
 ################################################################################
 
 main() {
@@ -544,7 +544,7 @@ main() {
     get_admin_token
     create_realm
 
-    # Renova token após criar realm (pode ter expirado)
+    # Renova token apÃ³s criar realm (pode ter expirado)
     get_admin_token
 
     create_clients

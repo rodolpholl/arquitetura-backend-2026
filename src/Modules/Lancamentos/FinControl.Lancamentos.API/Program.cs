@@ -1,10 +1,10 @@
 using FinControl.Infrastructure.Extensions;
 using FinControl.Infrastructure.Middleware;
 using FinControl.Infrastructure.Vault;
-using FinControl.Lancamentos.API;
 using FinControl.Lancamentos.API.Configuration;
 using FinControl.Lancamentos.Core.Context;
 using Microsoft.EntityFrameworkCore;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -48,7 +48,7 @@ builder.Services.AddDbContext<LancamentosDbContext>(opts =>
     if (string.IsNullOrEmpty(connectionString) && builder.Environment.IsDevelopment())
     {
         // Fallback para desenvolvimento local
-        connectionString = "Host=localhost;Database=fincontrol_lancamentos;Username=postgres;Password=postgres;Port=5432";
+        connectionString = "Host=localhost;Database=fincontrol_lancamentos;Username=fincontrol_admin;Password=fincontrol_dev_password_123;Port=5432";
         Console.WriteLine($"ℹ️  Usando string de conexão padrão de desenvolvimento (PostgreSQL local)");
     }
     else if (string.IsNullOrEmpty(connectionString))
@@ -76,9 +76,6 @@ catch (Exception ex) when (builder.Environment.IsDevelopment())
 // ==================== API / OPENAPI ====================
 builder.Services.AddOpenApi();
 
-// Scalar UI para OpenAPI (alternativa moderna ao Swagger UI)
-// builder.Services.AddScalarApiReference(); // TODO: verificar método correto
-
 // ==================== TODOS OS MÓDULOS DE FEATURES ====================
 // Registra Wolverine, handlers, validators, endpoints para todos os módulos
 builder.AddAllModules();
@@ -95,12 +92,10 @@ var app = builder.Build();
 // Aplica automaticamente todas as migrations pendentes no startup
 try
 {
-    using (var scope = app.Services.CreateScope())
-    {
-        var dbContext = scope.ServiceProvider.GetRequiredService<LancamentosDbContext>();
-        await dbContext.Database.MigrateAsync();
-        Console.WriteLine("✅ Migrations aplicadas com sucesso");
-    }
+    using var scope = app.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<LancamentosDbContext>();
+    await dbContext.Database.MigrateAsync();
+    Console.WriteLine("✅ Migrations aplicadas com sucesso");
 }
 catch (Exception ex) when (!app.Environment.IsProduction())
 {
@@ -147,11 +142,11 @@ app.MapHealthChecks("/health/ready");
 
 // ==================== ENDPOINTS ====================
 
-// Development: OpenAPI + Swagger UI
+// Development: OpenAPI + Scalar UI
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-    // app.MapScalarApiReference(); // TODO: verificar configuração do Scalar
+    app.MapScalarApiReference();
 }
 
 // Endpoints de todos os módulos (descobertos automaticamente pelo Wolverine)

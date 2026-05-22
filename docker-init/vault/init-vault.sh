@@ -1,13 +1,11 @@
 #!/bin/bash
 
 ################################################################################
-# Inicializa o Vault com secrets de desenvolvimento para Agile Workers
+# Inicializa o Vault com secrets de desenvolvimento para FinControl
 #
-# Uso: ./init-vault.sh [--env dev|staging|production]
-# 
 # Variáveis de ambiente:
 #   VAULT_ADDR      - Endereço do Vault (padrão: http://vault:8200)
-#   VAULT_TOKEN     - Token de acesso (padrão: agile_dev_token_12345)
+#   VAULT_TOKEN     - Token de acesso (padrão: fincontrol_dev_token_12345)
 #   VAULT_ENV       - Ambiente: dev, staging, production (padrão: dev)
 ################################################################################
 
@@ -15,7 +13,7 @@ set -euo pipefail
 
 # Configurações padrão
 VAULT_ADDR="${VAULT_ADDR:-http://vault:8200}"
-VAULT_TOKEN="${VAULT_TOKEN:-agile_dev_token_12345}"
+VAULT_TOKEN="${VAULT_TOKEN:-fincontrol_dev_token_12345}"
 VAULT_ENV="${VAULT_ENV:-dev}"
 
 # Cores para output
@@ -137,7 +135,7 @@ read_secret() {
 
 main() {
     echo ""
-    echo -e "${CYAN}🔐 Inicializador de Secrets - Agile Workers Backend${NC}"
+    echo -e "${CYAN}🔐 Inicializador de Secrets - FinControl${NC}"
     echo ""
     print_info "Configurações:"
     echo -e "   • Vault Address: ${VAULT_ADDR}"
@@ -152,49 +150,55 @@ main() {
     # Criar Secrets
     print_header "Criando Secrets no Vault (${VAULT_ENV})"
     
-    # PostgreSQL
+    # PostgreSQL — chave esperada por VaultKeys.PostgresConnection
     echo -e "${CYAN}🗄️  PostgreSQL${NC}"
     create_secret "postgres" \
-        "username=agile_admin" \
-        "password=agile_dev_password_123" \
-        "host=postgres" \
+        "connection_string=Host=localhost;Port=5432;Database=fincontrol_lancamentos;Username=fincontrol_admin;Password=fincontrol_dev_password_123" \
+        "username=fincontrol_admin" \
+        "password=fincontrol_dev_password_123" \
+        "host=localhost" \
         "port=5432"
     echo ""
-    
-    # Redis
+
+    # Redis — chave esperada por VaultKeys.RedisConnection
     echo -e "${CYAN}⚡ Redis${NC}"
     create_secret "redis" \
-        "password=agile_redis_password_123" \
-        "host=redis" \
+        "connection_string=localhost:6379,password=fincontrol_redis_password_123,abortConnect=false" \
+        "password=fincontrol_redis_password_123" \
+        "host=localhost" \
         "port=6379"
     echo ""
-    
-    # RabbitMQ
+
+    # RabbitMQ — chave esperada por VaultKeys.RabbitMqUri
     echo -e "${CYAN}🐰 RabbitMQ${NC}"
     create_secret "rabbitmq" \
-        "username=agile_user" \
-        "password=agile_rabbitmq_password_123" \
-        "vhost=/agile" \
-        "host=rabbitmq" \
+        "uri=amqp://fincontrol_user:fincontrol_rabbitmq_password_123@localhost:5672/%2Ffincontrol" \
+        "username=fincontrol_user" \
+        "password=fincontrol_rabbitmq_password_123" \
+        "vhost=/fincontrol" \
+        "host=localhost" \
         "port=5672"
     echo ""
-    
-    # Grafana
+
+    # Grafana — chaves esperadas por VaultKeys.LokiUrl / OtlpEndpoint / PrometheusPushgateway
     echo -e "${CYAN}📊 Grafana${NC}"
     create_secret "grafana" \
-        "admin_password=agile_grafana_password_123" \
-        "admin_username=admin"
+        "loki_url=http://localhost:3100" \
+        "otlp_endpoint=http://localhost:4317" \
+        "prometheus_pushgateway=http://localhost:9091" \
+        "admin_username=admin" \
+        "admin_password=fincontrol_grafana_password_123"
     echo ""
-    
-    # Keycloak
+
+    # Keycloak — chaves esperadas por VaultKeys.Keycloak*
     echo -e "${CYAN}🔐 Keycloak${NC}"
     create_secret "keycloak" \
-        "realm=agile" \
-        "url=http://keycloak:8080" \
+        "realm=fincontrol" \
+        "url=http://localhost:8081" \
+        "issuer=http://localhost:8081/realms/fincontrol" \
+        "jwks_uri=http://localhost:8081/realms/fincontrol/protocol/openid-connect/certs" \
         "admin_username=admin" \
-        "admin_password=agile_keycloak_password_123" \
-        "issuer=http://keycloak:8080/realms/agile" \
-        "jwks_uri=http://keycloak:8080/realms/agile/protocol/openid-connect/certs" \
+        "admin_password=fincontrol_keycloak_password_123" \
         "kong_client_id=kong-client" \
         "kong_client_secret=kong-secret" \
         "api_client_id=fincontrol-api" \
@@ -204,11 +208,11 @@ main() {
         "dev_admin=dev.admin" \
         "dev_admin_password=Admin@123456!"
     echo ""
-    
-    # Vault
+
+    # Vault (metadados / AppRole para produção)
     echo -e "${CYAN}🔑 Vault${NC}"
     create_secret "vault" \
-        "root_token=agile_dev_token_12345"
+        "root_token=fincontrol_dev_token_12345"
     echo ""
     
     # Verificar Secrets Criados

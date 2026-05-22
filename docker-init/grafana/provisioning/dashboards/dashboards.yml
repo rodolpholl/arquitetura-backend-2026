@@ -1,9 +1,9 @@
-apiVersion: 1
+﻿apiVersion: 1
 
 providers:
-  - name: 'Agile Workers Dashboards'
+  - name: 'FinControl Dashboards'
     orgId: 1
-    folder: 'Agile'
+    folder: 'FinControl'
     type: file
     disableDeletion: false
     updateIntervalSeconds: 10

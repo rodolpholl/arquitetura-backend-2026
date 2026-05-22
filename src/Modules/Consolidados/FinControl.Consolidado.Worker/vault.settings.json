@@ -8,6 +8,7 @@
       "dev/redis",
       "dev/rabbitmq",
       "dev/grafana",
+      "dev/keycloak",
       "dev/vault"
     ],
     "ConfigurationPrefix": "",

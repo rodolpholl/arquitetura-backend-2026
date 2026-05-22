@@ -1,4 +1,4 @@
-global:
+﻿global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
@@ -20,14 +20,14 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # RabbitMQ (Management Plugin expõe métricas em /metrics)
+  # RabbitMQ (Management Plugin expÃµe mÃ©tricas em /metrics)
   - job_name: 'rabbitmq'
     metrics_path: '/metrics'
     static_configs:
       - targets: ['rabbitmq:15672']
     basic_auth:
-      username: 'agile_user'
-      password: 'agile_rabbitmq_password_123'
+      username: 'fincontrol_user'
+      password: 'fincontrol_rabbitmq_password_123'
 
   # PostgreSQL (via postgres_exporter - opcional)
   # Descomentar se postgres_exporter for adicionado
@@ -47,7 +47,7 @@ scrape_configs:
       - targets: ['jaeger:14269']
 
   # API Application (quando estiver rodando)
-  # Descomentar quando a aplicação .NET estiver em execução
+  # Descomentar quando a aplicaÃ§Ã£o .NET estiver em execuÃ§Ã£o
   # - job_name: 'fincontrol-api'
   #   static_configs:
   #     - targets: ['localhost:5000', 'localhost:5001']
