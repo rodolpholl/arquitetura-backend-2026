@@ -48,10 +48,7 @@ public class RegistrarLancamentoCommandHandler(LancamentosDbContext db)
 
     private static RegistrarLancamentoResponse MapearParaResponse(Lancamento lancamento) =>
         new(
-            Id: lancamento.Id,
             NavigationId: lancamento.NavigationId ?? Guid.NewGuid(),
-            IdempotencyKey: Guid.NewGuid(),
-            CorrelationId: Guid.NewGuid(),
             CriadoEm: lancamento.CreatedAt
         );
 }
