@@ -11,6 +11,7 @@
   <Folder Name="/src/Modules/" />
   <Folder Name="/src/Modules/Consolidados/">
     <Project Path="src/Modules/Consolidados/FinControl.Consolidado.API/FinControl.Consolidado.API.csproj" />
+    <Project Path="src/Modules/Consolidados/FinControl.Consolidado.Core/FinControl.Consolidado.Core.csproj" Id="9cf1061c-80a0-43fe-9786-694e47ad7128" />
     <Project Path="src/Modules/Consolidados/FinControl.Consolidado.Worker/FinControl.Consolidado.Worker.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Lancamentos/">

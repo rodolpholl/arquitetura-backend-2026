@@ -19,7 +19,6 @@ public static class ApplicationModules
         builder.AddLancamentosModule();
 
         // TODO: Adicionar novos módulos aqui conforme forem criados
-        // builder.AddConsolidadosModule();
         // builder.AddXyzModule();
 
         return builder;

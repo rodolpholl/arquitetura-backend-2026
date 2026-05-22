@@ -4,7 +4,6 @@
     "AuthMethod": "AppRole",
     "MountPoint": "secret",
     "SecretPaths": [
-      "dev/postgres",
       "dev/redis",
       "dev/rabbitmq",
       "dev/grafana",

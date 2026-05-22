@@ -34,7 +34,6 @@ public class RegistrarLancamentoCommandHandler(
             CreatedByName = command.UsuarioNome,
             CreatedByEmail = command.UsuarioEmail
         };
-        
 
         db.Set<Lancamento>().Add(lancamento);
         await db.SaveChangesAsync(cancellationToken);

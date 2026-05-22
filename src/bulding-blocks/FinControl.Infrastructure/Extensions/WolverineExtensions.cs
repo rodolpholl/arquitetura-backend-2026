@@ -100,6 +100,51 @@ public static class WolverineExtensions
     }
 
     /// <summary>
+    /// Overload sem EF Core — para módulos que usam apenas Redis/cache e não possuem DbContext.
+    /// Idêntico ao genérico, mas sem <c>UseEntityFrameworkCoreTransactions()</c>.
+    /// </summary>
+    public static WebApplicationBuilder AddFinControlWolverine(
+        this WebApplicationBuilder builder,
+        Action<WolverineOptions>? configure = null,
+        params System.Reflection.Assembly[] handlerAssemblies)
+    {
+        var rabbitMqUri = builder.Configuration[VaultKeys.RabbitMqUri];
+        var isRabbitMqAvailable = !string.IsNullOrEmpty(rabbitMqUri);
+
+        builder.Services.AddWolverineHttp();
+
+        builder.Host.UseWolverine(opts =>
+        {
+            opts.Policies.AddMiddleware<LoggingMiddleware>();
+            opts.Policies.AddMiddleware<FluentValidationMiddleware>();
+
+            if (isRabbitMqAvailable)
+            {
+                opts.UseRabbitMq(new Uri(rabbitMqUri!))
+                    .AutoProvision();
+            }
+            else if (!builder.Environment.IsDevelopment())
+            {
+                throw new InvalidOperationException(
+                    $"Secret '{VaultKeys.RabbitMqUri}' não encontrado no Vault (dev/rabbitmq → uri). " +
+                    "RabbitMQ é obrigatório em produção.");
+            }
+
+            foreach (var assembly in handlerAssemblies)
+                opts.Discovery.IncludeAssembly(assembly);
+
+            configure?.Invoke(opts);
+        });
+
+        if (builder.Environment.IsDevelopment() && !isRabbitMqAvailable)
+        {
+            Console.WriteLine("ℹ️  RabbitMQ não configurado - Wolverine rodará apenas em modo in-process (sem distribuição)");
+        }
+
+        return builder;
+    }
+
+    /// <summary>
     /// Registra middlewares HTTP padrão do FinControl:
     ///   - CorrelationId (extrai/gera X-Correlation-Id)
     ///   - ExceptionHandler global (ProblemDetails RFC 7807)

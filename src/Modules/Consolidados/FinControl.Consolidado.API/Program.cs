@@ -1,44 +1,129 @@
+using FinControl.Auth.Extensions;
+using FinControl.Consolidado.API.Configuration;
+using FinControl.Infrastructure.Extensions;
+using FinControl.Infrastructure.Middleware;
+using FinControl.Infrastructure.Vault;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// ==================== CONFIGURAÇÃO DE SECRETS (VAULT) ====================
+try
+{
+    builder.AddFinControlVault();
+}
+catch (Exception ex) when (builder.Environment.IsDevelopment())
+{
+    Console.WriteLine($"⚠️  Vault não disponível em desenvolvimento: {ex.Message}");
+}
 
+// ==================== LOGGING ====================
+try
+{
+    builder.AddFinControlSerilog("fincontrol-consolidados");
+}
+catch (Exception ex) when (builder.Environment.IsDevelopment())
+{
+    Console.WriteLine($"⚠️  Serilog não fully configurado em desenvolvimento: {ex.Message}");
+}
+
+// ==================== OBSERVABILIDADE ====================
+try
+{
+    builder.AddFinControlObservability("fincontrol-consolidados");
+}
+catch (Exception ex) when (builder.Environment.IsDevelopment())
+{
+    Console.WriteLine($"⚠️  Observabilidade não disponível em desenvolvimento: {ex.Message}");
+}
+
+// ==================== HEALTH CHECKS ====================
+try
+{
+    builder.Services.AddFinControlHealthChecks(
+        builder.Configuration,
+        includeRedis: true,
+        includeRabbitMq: !builder.Environment.IsDevelopment());
+}
+catch (Exception ex) when (builder.Environment.IsDevelopment())
+{
+    Console.WriteLine($"⚠️  Health checks incompletos em desenvolvimento: {ex.Message}");
+}
+
+// ==================== AUTENTICAÇÃO JWT (KEYCLOAK) ====================
+try
+{
+    builder.AddFinControlKeycloakAuth();
+}
+catch (Exception ex) when (builder.Environment.IsDevelopment())
+{
+    Console.WriteLine($"⚠️  Keycloak não configurado em desenvolvimento: {ex.Message}");
+}
+
+// ==================== API / OPENAPI ====================
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
+});
+
+// ==================== TODOS OS MÓDULOS DE FEATURES ====================
+builder.AddAllModules();
+
+// ==================== EXCEPTION HANDLING ====================
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
+// ==================== BUILD PIPELINE HTTP ====================
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// ==================== MIDDLEWARES HTTP ====================
+
+// 1. Request Logging (Serilog)
+try
+{
+    app.UseFinControlRequestLogging();
+}
+catch
+{
+    // Se Serilog não foi configurado, continua sem
+}
+
+// 2. HTTPS Redirect
+app.UseHttpsRedirection();
+
+// 3. Observabilidade
+try
+{
+    app.UseFinControlObservability();
+}
+catch
+{
+    // Se observabilidade não foi configurada, continua sem
+}
+
+// 4. Exception Handler Global (RFC 7807 ProblemDetails)
+app.UseExceptionHandler();
+
+// 5. Autenticação e Autorização
+app.UseAuthentication();
+app.UseAuthorization();
+
+// ==================== HEALTH CHECKS ====================
+app.MapHealthChecks("/health");
+app.MapHealthChecks("/health/ready");
+
+// ==================== ENDPOINTS ====================
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-    app.MapScalarApiReference();
+    app.MapScalarApiReference(options =>
+    {
+        options.AddPreferredSecuritySchemes("Bearer");
+    });
 }
 
-app.UseHttpsRedirection();
+app.MapAllModules();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
-
+// ==================== RUN ====================
+Console.WriteLine($"\n🚀 Consolidados iniciando em modo: {(app.Environment.IsDevelopment() ? "DESENVOLVIMENTO" : "PRODUÇÃO")}\n");
 app.Run();
-
-sealed record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
