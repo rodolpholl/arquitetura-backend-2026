@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Wolverine;
 using Wolverine.EntityFrameworkCore;
+using Wolverine.Http;
 using Wolverine.RabbitMQ;
 
 namespace FinControl.Infrastructure.Extensions;
@@ -50,6 +51,8 @@ public static class WolverineExtensions
         
         // Em desenvolvimento, RabbitMQ é opcional
         var isRabbitMqAvailable = !string.IsNullOrEmpty(rabbitMqUri);
+
+        builder.Services.AddWolverineHttp();
 
         builder.Host.UseWolverine(opts =>
         {

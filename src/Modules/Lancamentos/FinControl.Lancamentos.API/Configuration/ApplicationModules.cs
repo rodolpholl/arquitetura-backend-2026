@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Builder;
+using Wolverine.Http;
 
 namespace FinControl.Lancamentos.API.Configuration;
 
@@ -29,6 +30,9 @@ public static class ApplicationModules
     /// </summary>
     public static WebApplication MapAllModules(this WebApplication app)
     {
+        // Mapeia todos os endpoints HTTP decorados com [WolverineGet], [WolverinePost], etc.
+        app.MapWolverineEndpoints();
+
         // Módulo Lancamentos - mapeia middlewares e endpoints
         app.MapLancamentosModule();
 

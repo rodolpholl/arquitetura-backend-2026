@@ -1,3 +1,4 @@
+using FinControl.Auth.Extensions;
 using FinControl.Infrastructure.Extensions;
 using FinControl.Infrastructure.Middleware;
 using FinControl.Infrastructure.Vault;
@@ -44,18 +45,11 @@ catch (Exception ex) when (builder.Environment.IsDevelopment())
 builder.Services.AddDbContext<LancamentosDbContext>(opts =>
 {
     var connectionString = builder.Configuration[VaultKeys.PostgresConnection];
-    
-    if (string.IsNullOrEmpty(connectionString) && builder.Environment.IsDevelopment())
-    {
-        // Fallback para desenvolvimento local
-        connectionString = "Host=localhost;Database=fincontrol_lancamentos;Username=fincontrol_admin;Password=fincontrol_dev_password_123;Port=5432";
-        Console.WriteLine($"ℹ️  Usando string de conexão padrão de desenvolvimento (PostgreSQL local)");
-    }
-    else if (string.IsNullOrEmpty(connectionString))
-    {
+   
+    if (string.IsNullOrEmpty(connectionString))
         throw new InvalidOperationException(
             $"Secret '{VaultKeys.PostgresConnection}' não encontrado no Vault (dev/postgres → connection_string).");
-    }
+    
 
     opts.UseNpgsql(connectionString);
 });
@@ -73,8 +67,21 @@ catch (Exception ex) when (builder.Environment.IsDevelopment())
     Console.WriteLine($"⚠️  Health checks incompletos em desenvolvimento: {ex.Message}");
 }
 
+// ==================== AUTENTICAÇÃO JWT (KEYCLOAK) ====================
+try
+{
+    builder.AddFinControlKeycloakAuth();
+}
+catch (Exception ex) when (builder.Environment.IsDevelopment())
+{
+    Console.WriteLine($"⚠️  Keycloak não configurado em desenvolvimento: {ex.Message}");
+}
+
 // ==================== API / OPENAPI ====================
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
+});
 
 // ==================== TODOS OS MÓDULOS DE FEATURES ====================
 // Registra Wolverine, handlers, validators, endpoints para todos os módulos
@@ -135,6 +142,10 @@ catch
 // 4. Exception Handler Global (RFC 7807 ProblemDetails)
 app.UseExceptionHandler();
 
+// 5. Autenticação e Autorização (DEVE ser antes de MapAllModules)
+app.UseAuthentication();
+app.UseAuthorization();
+
 // ==================== HEALTH CHECKS ====================
 // Endpoints: /health (liveness), /health/ready (readiness)
 app.MapHealthChecks("/health");
@@ -146,7 +157,10 @@ app.MapHealthChecks("/health/ready");
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-    app.MapScalarApiReference();
+    app.MapScalarApiReference(options =>
+    {
+        options.AddPreferredSecuritySchemes("Bearer");
+    });
 }
 
 // Endpoints de todos os módulos (descobertos automaticamente pelo Wolverine)

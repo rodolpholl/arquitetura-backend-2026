@@ -1,50 +1,40 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using Wolverine;
 
 namespace FinControl.Infrastructure.Wolverine;
 
 /// <summary>
-/// Middleware Wolverine 5.x de logging por convencao (Before/After/Finally).
-/// Wolverine 5.x nao usa mais HandlerContinuation — para cancelar, lance uma excecao.
+/// Cascade Between Before → After para latência e nome do tipo.
+/// </summary>
+public sealed record LogEntry(string MessageType, Stopwatch Stopwatch);
+
+/// <summary>
+/// Middleware Wolverine de logging de latência.
+///
+/// Usa Envelope (tipo nativo Wolverine) em vez de T message (genérico aberto).
+/// Parâmetros genéricos T em métodos de middleware causam UnResolvableVariableException
+/// porque o JasperFx code gen não consegue fechar o tipo ao gerar o handler.
 /// </summary>
 public sealed class LoggingMiddleware
 {
-    /// <summary>Executado antes do handler.</summary>
-    public static void Before<T>(
-        T message,
-        ILogger<LoggingMiddleware> logger,
-        Stopwatch stopwatch) where T : class
+    public static LogEntry Before(Envelope envelope, ILogger<LoggingMiddleware> logger)
     {
-        stopwatch.Restart();
+        var typeName = envelope.Message?.GetType().Name ?? "Unknown";
+        var entry = new LogEntry(typeName, Stopwatch.StartNew());
+
         if (logger.IsEnabled(LogLevel.Information))
-            logger.LogInformation("Wolverine iniciando {MessageType}", typeof(T).Name);
+            logger.LogInformation("Wolverine iniciando {MessageType}", entry.MessageType);
+
+        return entry;
     }
 
-    /// <summary>Executado apos o handler concluir com sucesso.</summary>
-    public static void After<T>(
-        T message,
-        ILogger<LoggingMiddleware> logger,
-        Stopwatch stopwatch) where T : class
+    public static void After(ILogger<LoggingMiddleware> logger, LogEntry entry)
     {
         if (logger.IsEnabled(LogLevel.Information))
             logger.LogInformation(
                 "Wolverine {MessageType} concluido em {ElapsedMs}ms",
-                typeof(T).Name,
-                stopwatch.ElapsedMilliseconds);
-    }
-
-    /// <summary>Executado sempre — inclusive em caso de excecao.</summary>
-    public static void Finally<T>(
-        T message,
-        ILogger<LoggingMiddleware> logger,
-        Exception? exception,
-        Stopwatch stopwatch) where T : class
-    {
-        if (exception is not null)
-            logger.LogError(
-                exception,
-                "Wolverine {MessageType} falhou em {ElapsedMs}ms",
-                typeof(T).Name,
-                stopwatch.ElapsedMilliseconds);
+                entry.MessageType,
+                entry.Stopwatch.ElapsedMilliseconds);
     }
 }

@@ -19,11 +19,21 @@ public class RegistrarLancamentoCommandValidator : AbstractValidator<RegistrarLa
         // Valor
         RuleFor(x => x.Valor)
             .GreaterThan(0)
-            .WithMessage("Valor deve ser maior que zero (mínimo 1 centavo).");
-
-        RuleFor(x => x.Valor)
+            .WithMessage("Valor deve ser maior que zero (mínimo 1 centavo).")
             .LessThanOrEqualTo(99999999999) // ~999.999.999,99
-            .WithMessage("Valor máximo permitido é R$ 999.999.999,99.");
+            .WithMessage("Valor máximo permitido é R$ 999.999.999,99.")
+            
+            .Must((model, v) => model.Modalidade == ModalidadeLancamento.Venda ||
+                                model.Modalidade == ModalidadeLancamento.RecebimentoDivida ||
+                                model.Modalidade == ModalidadeLancamento.Devolucao ? v >= 0 : true)
+            .WithMessage("Valor deve ser maior que zero para modalidades informada.")
+
+            .Must((model, v) => model.Modalidade == ModalidadeLancamento.Suprimento ||
+                                model.Modalidade == ModalidadeLancamento.PagamentoFornecedor ||
+                                model.Modalidade == ModalidadeLancamento.Sangria ? v <0 : true)
+            .WithMessage("Valor deve ser menor que zero para modalidades informada.");
+
+        
 
         // Descrição - obrigatória se Modalidade = Outros
         RuleFor(x => x.Descricao)

@@ -1,5 +1,6 @@
 using FinControl.Infrastructure.Http;
 using FinControl.Lancamentos.Core.Domain.Enums;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Wolverine;
 using Wolverine.Http;
@@ -28,8 +29,10 @@ public record RegistrarLancamentoRequest(
 
     /// <summary>
     /// Data do lançamento (opcional, usa UTC now se omitida).
+    /// Aceita formatos: "2024-05-22", "2024-05-22T10:30:00", "2024-05-22T10:30:00Z".
+    /// Valores sem timezone são interpretados como UTC.
     /// </summary>
-    DateTimeOffset? DataLancamento = null
+    DateTime? DataLancamento = null
 );
 
 /// <summary>
@@ -44,6 +47,7 @@ public class RegistrarLancamentoEndpoint
     /// <summary>
     /// Handler do endpoint - descoberto automaticamente pelo Wolverine.
     /// </summary>
+    [Authorize]
     [WolverinePost("/lancamentos/registrar")]
     public static async Task<RegistrarLancamentoResponse> Handle(
         RegistrarLancamentoRequest request,
@@ -68,7 +72,9 @@ public class RegistrarLancamentoEndpoint
             Modalidade = request.Modalidade,
             Valor = request.Valor,
             Descricao = request.Descricao,
-            DataLancamento = request.DataLancamento ?? DateTimeOffset.UtcNow,
+            DataLancamento = request.DataLancamento.HasValue
+                ? new DateTimeOffset(request.DataLancamento.Value, TimeSpan.Zero)
+                : DateTimeOffset.UtcNow,
             UsuarioId = usuarioId,
             UsuarioNome = usuarioNome,
             UsuarioEmail = usuarioEmail,
