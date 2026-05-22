@@ -11,39 +11,15 @@ namespace FinControl.Lancamentos.Core.Domain;
 
 public class Lancamento : DomainEntity<long>, IAuditableDomainEntity, ISoftDeleteDomainEntity
 {
-    /// <summary>
-    /// Construtor privado para Entity Framework.
-    /// Use <see cref="Criar"/> para instanciar via fábrica.
-    /// </summary>
-    private Lancamento() { }
-
-    /// <summary>
-    /// Fábrica para criar uma nova entidade Lancamento com valores iniciais.
-    /// </summary>
-    public static Lancamento Criar(
-        ModalidadeLancamento modalidade,
-        long valor,
-        string? descricao = null,
-        DateTimeOffset? dataLancamento = null)
-    {
-        return new Lancamento
-        {
-            Modalidade = modalidade,
-            Valor = valor,
-            Descricao = descricao ?? string.Empty,
-            DataLancamento = dataLancamento ?? DateTimeOffset.UtcNow
-        };
-    }
-
-    public ModalidadeLancamento Modalidade { get; private set; }
+    public ModalidadeLancamento Modalidade { get; set; }
     public long Valor { get; set; }
     public decimal ValorFormatado => Valor / 100m;
     public TipoLancamento Tipo => Valor < 0 ? TipoLancamento.Debito : TipoLancamento.Credito;
     public string? TipoFormatado => Tipo.GetType()
         .GetField(Tipo.ToString())
         ?.GetCustomAttribute<DisplayAttribute>()?.Name ?? Tipo.ToString();
-    public string? Descricao { get; private set; } = string.Empty;
-    public DateTimeOffset DataLancamento { get; private set; }
+    public string? Descricao { get; set; } = string.Empty;
+    public DateTimeOffset DataLancamento { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? UpdatedAt { get; set; }
@@ -55,4 +31,5 @@ public class Lancamento : DomainEntity<long>, IAuditableDomainEntity, ISoftDelet
     public string? UpdatedByEmail { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
     public string? DeletedBy { get; set; }
+
 }

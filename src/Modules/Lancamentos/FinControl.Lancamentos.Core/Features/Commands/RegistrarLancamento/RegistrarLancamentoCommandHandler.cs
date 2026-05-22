@@ -1,6 +1,7 @@
 using FinControl.Lancamentos.Core.Context;
 using FinControl.Lancamentos.Core.Domain;
 using FinControl.Lancamentos.Core.Features.Events;
+using Microsoft.Extensions.Logging;
 
 namespace FinControl.Lancamentos.Core.Features.Commands.RegistrarLancamento;
 
@@ -9,7 +10,9 @@ namespace FinControl.Lancamentos.Core.Features.Commands.RegistrarLancamento;
 /// Usa constructor injection para LancamentosDbContext — resolve via DI padrão,
 /// sem depender do code gen de method-parameter do Wolverine EF Core.
 /// </summary>
-public class RegistrarLancamentoCommandHandler(LancamentosDbContext db)
+public class RegistrarLancamentoCommandHandler(
+    LancamentosDbContext db,
+    ILogger<RegistrarLancamentoCommandHandler> logger)
 {
     public async Task<(RegistrarLancamentoResponse, LancamentoRegistradoMessage?)> Handle(
         RegistrarLancamentoCommand command,
@@ -19,22 +22,39 @@ public class RegistrarLancamentoCommandHandler(LancamentosDbContext db)
         if (existente is not null)
             return (MapearParaResponse(existente), null);
 
-        var lancamento = Lancamento.Criar(
-            modalidade: command.Modalidade,
-            valor: command.Valor,
-            descricao: command.Descricao,
-            dataLancamento: command.DataLancamento == default ? null : command.DataLancamento
-        );
 
-        lancamento.CreatedAt = DateTimeOffset.UtcNow;
-        lancamento.CreatedBy = command.UsuarioId;
-        lancamento.CreatedByName = command.UsuarioNome;
-        lancamento.CreatedByEmail = command.UsuarioEmail;
+        Lancamento lancamento = new()
+        {
+            Modalidade = command.Modalidade,
+            Valor = command.Valor,
+            Descricao = command.Descricao,
+            DataLancamento = command.DataLancamento == default ? DateTimeOffset.UtcNow : command.DataLancamento,
+            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedBy = command.UsuarioId,
+            CreatedByName = command.UsuarioNome,
+            CreatedByEmail = command.UsuarioEmail
+        };
+        
 
         db.Set<Lancamento>().Add(lancamento);
         await db.SaveChangesAsync(cancellationToken);
 
-        return (MapearParaResponse(lancamento), MapearParaEvento(lancamento, command));
+        var evento = MapearParaEvento(lancamento, command);
+
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation(
+                "Mensagem {EventType} publicada para o RabbitMQ | Exchange={Exchange} RoutingKey={RoutingKey} Queue={Queue} NavigationId={NavigationId} Modalidade={Modalidade} Valor={Valor} UsuarioId={UsuarioId} CorrelationId={CorrelationId}",
+                nameof(LancamentoRegistradoMessage),
+                "lancamentos.events",
+                "lancamento.criado",
+                "lancamentos.registered",
+                evento.NavigationId,
+                evento.Modalidade,
+                evento.Valor,
+                evento.UsuarioId,
+                evento.CorrelationId);
+
+        return (MapearParaResponse(lancamento), evento);
     }
 
     private static Task<Lancamento?> VerificarIdempotenciaAsync(
