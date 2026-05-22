@@ -24,10 +24,7 @@ scrape_configs:
   - job_name: 'rabbitmq'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['rabbitmq:15672']
-    basic_auth:
-      username: 'fincontrol_user'
-      password: 'fincontrol_rabbitmq_password_123'
+      - targets: ['rabbitmq:15692']
 
   # PostgreSQL (via postgres_exporter - opcional)
   # Descomentar se postgres_exporter for adicionado
@@ -46,9 +43,8 @@ scrape_configs:
     static_configs:
       - targets: ['jaeger:14269']
 
-  # API Application (quando estiver rodando)
-  # Descomentar quando a aplicaÃ§Ã£o .NET estiver em execuÃ§Ã£o
-  # - job_name: 'fincontrol-api'
+  # API Application (quando estiver rodando localmente)
+  # - job_name: 'fincontrol-lancamentos'
   #   static_configs:
-  #     - targets: ['localhost:5000', 'localhost:5001']
+  #     - targets: ['host.docker.internal:5083']
   #   metrics_path: '/metrics'

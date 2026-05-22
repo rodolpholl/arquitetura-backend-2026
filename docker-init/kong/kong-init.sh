@@ -24,29 +24,29 @@ echo "📋 Configurando Kong com Keycloak OIDC..."
 # 1. Criar um Kong Service (API de exemplo)
 echo "  1️⃣ Criando Kong Service..."
 curl -i -X POST http://kong:8001/services \
-  --data name=fincontrol-api \
-  --data url=http://fincontrol-api:5000 \
+  --data name=fincontrol-lancamentos \
+  --data url=http://host.docker.internal:5083 \
   --data protocol=http || echo "Service já existe"
 
 echo ""
 
 # 2. Criar um Kong Route
 echo "  2️⃣ Criando Kong Route..."
-curl -i -X POST http://kong:8001/services/fincontrol-api/routes \
+curl -i -X POST http://kong:8001/services/fincontrol-lancamentos/routes \
   --data "hosts[]=api.localhost" \
-  --data "paths[]=/api" \
-  --data name=fincontrol-api-route || echo "Route já existe"
+  --data "paths[]=/lancamentos" \
+  --data name=fincontrol-lancamentos-route || echo "Route já existe"
 
 echo ""
 
 # 3. Configurar OIDC Plugin no Route
 echo "  3️⃣ Configurando OIDC Plugin..."
-curl -i -X POST http://kong:8001/routes/fincontrol-api-route/plugins \
+curl -i -X POST http://kong:8001/routes/fincontrol-lancamentos-route/plugins \
   --data name=oidc \
   --data config.client_id=kong-client \
   --data config.client_secret=kong-secret \
   --data config.discovery="http://keycloak:8080/realms/fincontrol/.well-known/openid-configuration" \
-  --data config.redirect_uri="http://localhost:8000/api/" \
+  --data config.redirect_uri="http://localhost:8000/lancamentos/" \
   --data config.scope="openid profile email" \
   --data config.session_secret="fincontrol-kong-session-secret-12345" \
   --data config.token_endpoint_auth_method=client_secret_basic \
@@ -56,7 +56,7 @@ echo ""
 echo "✅ Kong configurado com sucesso!"
 echo ""
 echo "📌 Próximos passos:"
-echo "   1. Acessar http://localhost:8080/admin (Keycloak Admin Console)"
+echo "   1. Acessar http://localhost:8081/admin (Keycloak Admin Console)"
 echo "   2. Login: admin / fincontrol_keycloak_password_123"
 echo "   3. Criar realm 'fincontrol'"
 echo "   4. Criar cliente 'kong-client' com secret 'kong-secret'"
