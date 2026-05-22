@@ -1,5 +1,6 @@
 using FinControl.Lancamentos.Core.Context;
 using FinControl.Lancamentos.Core.Domain;
+using FinControl.Lancamentos.Core.Features.Events;
 
 namespace FinControl.Lancamentos.Core.Features.Commands.RegistrarLancamento;
 
@@ -10,13 +11,13 @@ namespace FinControl.Lancamentos.Core.Features.Commands.RegistrarLancamento;
 /// </summary>
 public class RegistrarLancamentoCommandHandler(LancamentosDbContext db)
 {
-    public async Task<RegistrarLancamentoResponse> Handle(
+    public async Task<(RegistrarLancamentoResponse, LancamentoRegistradoMessage?)> Handle(
         RegistrarLancamentoCommand command,
         CancellationToken cancellationToken = default)
     {
         var existente = await VerificarIdempotenciaAsync(command.IdempotencyKey, cancellationToken);
         if (existente is not null)
-            return MapearParaResponse(existente);
+            return (MapearParaResponse(existente), null);
 
         var lancamento = Lancamento.Criar(
             modalidade: command.Modalidade,
@@ -33,7 +34,7 @@ public class RegistrarLancamentoCommandHandler(LancamentosDbContext db)
         db.Set<Lancamento>().Add(lancamento);
         await db.SaveChangesAsync(cancellationToken);
 
-        return MapearParaResponse(lancamento);
+        return (MapearParaResponse(lancamento), MapearParaEvento(lancamento, command));
     }
 
     private static Task<Lancamento?> VerificarIdempotenciaAsync(
@@ -50,5 +51,22 @@ public class RegistrarLancamentoCommandHandler(LancamentosDbContext db)
         new(
             NavigationId: lancamento.NavigationId ?? Guid.NewGuid(),
             CriadoEm: lancamento.CreatedAt
+        );
+
+    private static LancamentoRegistradoMessage MapearParaEvento(
+        Lancamento lancamento,
+        RegistrarLancamentoCommand command) =>
+        new(
+            Id: lancamento.Id,
+            NavigationId: lancamento.NavigationId ?? Guid.NewGuid(),
+            Modalidade: lancamento.Modalidade,
+            Valor: lancamento.Valor,
+            Descricao: lancamento.Descricao,
+            DataLancamento: lancamento.DataLancamento,
+            OcorridoEm: lancamento.CreatedAt,
+            UsuarioId: command.UsuarioId,
+            UsuarioNome: command.UsuarioNome,
+            UsuarioEmail: command.UsuarioEmail,
+            CorrelationId: command.CorrelationId
         );
 }

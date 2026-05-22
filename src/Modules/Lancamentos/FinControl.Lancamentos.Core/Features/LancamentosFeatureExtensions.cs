@@ -1,9 +1,11 @@
 using FinControl.Infrastructure.Extensions;
 using FinControl.Lancamentos.Core.Context;
 using FinControl.Lancamentos.Core.Features.Commands.RegistrarLancamento;
+using FinControl.Lancamentos.Core.Features.Events;
 using FluentValidation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Wolverine.RabbitMQ;
 
 namespace FinControl.Lancamentos.Core.Features;
 
@@ -26,8 +28,11 @@ public static class LancamentosFeatureExtensions
     {
         // Registrar Wolverine com descoberta automática de handlers no assembly do Lancamentos.Core
         builder.AddFinControlWolverine<LancamentosDbContext>(
-            configure: null,
-            // Assembly onde Wolverine descobrirá handlers por convenção
+            configure: opts =>
+            {
+                opts.PublishMessage<LancamentoRegistradoMessage>()
+                    .ToRabbitRoutingKey("lancamento.criado", "lancamentos.events");
+            },
             typeof(RegistrarLancamentoCommandHandler).Assembly
         );
 
