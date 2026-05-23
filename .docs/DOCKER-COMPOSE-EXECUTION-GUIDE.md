@@ -1,127 +1,185 @@
-# Docker Compose - Agile Workers Backend
+# Docker Compose - FinControl Backend
 
-Infraestrutura completa para desenvolvimento local com PostgreSQL, Redis, RabbitMQ, Vault, Jaeger, Prometheus e Grafana.
+Infraestrutura completa para desenvolvimento local com PostgreSQL, Redis, RabbitMQ, Vault, Keycloak, Kong, Jaeger, Prometheus e Grafana.
 
-## 📦 Serviços
+## Servicos
 
-| Serviço | Porta | Credenciais |
-|---------|-------|------------|
-| **PostgreSQL** | 5432 | agile_admin / agile_dev_password_123 |
-| **Redis** | 6379 | password: agile_redis_password_123 |
-| **RabbitMQ** | 5672 / 15672 | agile_user / agile_rabbitmq_password_123 |
-| **Vault** | 8200 | Token: agile_dev_token_12345 |
-| **Jaeger** | 16686 | - |
-| **Prometheus** | 9090 | - |
-| **Grafana** | 3000 | admin / agile_grafana_password_123 |
+| Servico | Porta | Credenciais |
+|---------|-------|-------------|
+| **PostgreSQL** | 5432 | fincontrol_admin / fincontrol_dev_password_123 |
+| **Redis** | 6379 | password: fincontrol_redis_password_123 |
+| **RabbitMQ** | 5672 / 15672 | fincontrol_user / fincontrol_rabbitmq_password_123 |
+| **Vault** | 8200 | Token: fincontrol_dev_token_12345 |
+| **Keycloak** | 8081 | admin / fincontrol_keycloak_password_123 |
+| **Kong** | 8000 / 8001 / 8002 | — (Admin API sem auth em dev) |
+| **Jaeger** | 16686 | — |
+| **Prometheus** | 9090 | — |
+| **Grafana** | 3000 | admin / fincontrol_grafana_password_123 |
 
-## 🚀 Quick Start (Execute em ordem)
+## Quick Start
 
-### 1️⃣ Iniciar Todos os Serviços
+### 1. Iniciar Todos os Servicos
+
 ```bash
 docker-compose up -d
 ```
 
-Aguarde 30 segundos para os serviços estabilizarem.
+Aguarde ~120 segundos para todos os servicos estabilizarem e os containers de init concluirem.
 
-### 2️⃣ Verificar Status
+### 2. Verificar Status
+
 ```bash
 docker-compose ps
 ```
 
-Todos devem estar com status "healthy" ou "running".
+Os containers de infra devem estar `healthy`. Os containers de init (`vault-init`, `keycloak-init`, `kong-init`) devem estar `Exited (0)`.
 
-### 3️⃣ Inicializar Secrets no Vault
+### 3. Acessar as UIs
+
+- **Vault:** http://localhost:8200/ui — Token: `fincontrol_dev_token_12345`
+- **Keycloak:** http://localhost:8081 — admin / fincontrol_keycloak_password_123
+- **RabbitMQ:** http://localhost:15672 — fincontrol_user / fincontrol_rabbitmq_password_123
+- **Kong Manager:** http://localhost:8002
+- **Prometheus:** http://localhost:9090
+- **Jaeger:** http://localhost:16686
+- **Grafana:** http://localhost:3000 — admin / fincontrol_grafana_password_123
+
+### 4. Iniciar as APIs .NET
+
+Com a infra rodando, inicie os projetos .NET (migrations aplicadas automaticamente no startup):
+
 ```bash
-# Opção 1: Via Makefile (recomendado)
-make vault-init
+# API de Lancamentos
+dotnet run --project src/Modules/Lancamentos/FinControl.Lancamentos.API
 
-# Opção 2: Via PowerShell
-.\scripts\Initialize-Vault.ps1 -Environment dev
+# Worker de Consolidados
+dotnet run --project src/Modules/Consolidados/FinControl.Consolidado.Worker
 
-# Opção 3: Via Vault CLI manualmente
-export VAULT_ADDR='http://localhost:8200'
-export VAULT_TOKEN='agile_dev_token_12345'
-
-vault kv put secret/dev/postgres username="agile_admin" password="agile_dev_password_123"
-vault kv put secret/dev/redis password="agile_redis_password_123"
-vault kv put secret/dev/rabbitmq username="agile_user" password="agile_rabbitmq_password_123"
-vault kv put secret/dev/grafana admin_password="agile_grafana_password_123"
+# API de Consolidados
+dotnet run --project src/Modules/Consolidados/FinControl.Consolidado.API
 ```
 
-### 4️⃣ Acessar as UIs
-- 🔐 **Vault:** http://localhost:8200/ui (Token: agile_dev_token_12345)
-- 📊 **RabbitMQ:** http://localhost:15672 (agile_user / agile_rabbitmq_password_123)
-- 📈 **Prometheus:** http://localhost:9090
-- 📉 **Jaeger:** http://localhost:16686
-- 🎨 **Grafana:** http://localhost:3000 (admin / agile_grafana_password_123)
+Cada API aplica migrations pendentes automaticamente ao iniciar. Se o Vault nao estiver disponivel, a API falha com erro explicito.
 
-## 🛠️ Comandos Úteis
+## Comandos Uteis
 
 ```bash
-# Parar todos os serviços
+# Parar todos os servicos
 docker-compose down
 
-# Remover volumes e dados (CUIDADO!)
+# Remover volumes e dados (CUIDADO: apaga banco, cache, etc.)
 docker-compose down -v
 
-# Ver logs de um serviço
+# Ver logs de um servico
 docker-compose logs -f postgres
 docker-compose logs -f rabbitmq
 docker-compose logs -f vault
+docker-compose logs -f vault-init
+docker-compose logs -f keycloak-init
+docker-compose logs -f kong-init
 
 # Ver status
 docker-compose ps
 
-# Vault CLI
-make vault-list              # Listar secrets
-make vault-read SECRET=postgres  # Ler um secret
-make vault-ui                # Abrir UI
+# Reiniciar um servico especifico
+docker-compose restart kong
 ```
 
-## 🔌 Connection Strings
+## Connection Strings
 
 ```
-PostgreSQL: Server=localhost;Port=5432;Database=agile_lancamentos;User Id=agile_admin;Password=agile_dev_password_123;
-Redis: localhost:6379,password=agile_redis_password_123
-RabbitMQ: amqp://agile_user:agile_rabbitmq_password_123@localhost:5672/agile
-Vault: http://localhost:8200
-Jaeger OTLP: http://localhost:14268/api/traces
+PostgreSQL:  Host=localhost;Port=5432;Database=fincontrol_lancamentos;Username=fincontrol_admin;Password=fincontrol_dev_password_123
+Redis:       localhost:6379,password=fincontrol_redis_password_123,abortConnect=false
+RabbitMQ:   amqp://fincontrol_user:fincontrol_rabbitmq_password_123@localhost:5672/%2Ffincontrol
+Vault:       http://localhost:8200
+Keycloak:    http://localhost:8081
+OTLP gRPC:  http://localhost:4317
+Jaeger UI:  http://localhost:16686
 ```
 
-## 🔐 Segurança
+Essas connection strings sao injetadas automaticamente pelo Vault via `vault-init`. As APIs as consomem via `VaultKeys.*` — nunca via appsettings diretamente.
 
-- ✅ **Secrets:** Armazenados em Vault (nunca em Git)
-- ✅ **Arquivos:** `.env.docker` ignorado pelo Git (arquivo local)
-- ✅ **Template:** `.env.docker.example` está versionado (seguro)
+## Sequencia de Inicializacao
 
-## 📁 Arquivos de Inicialização
+```
+docker-compose up -d
+        |
+        v
+  PostgreSQL, Redis, RabbitMQ, Vault, Jaeger, Prometheus  (Fase 1 — infra)
+        |
+        v
+  Keycloak, Kong, Grafana                                  (Fase 2 — plataforma)
+        |
+        v
+  vault-init     → cria secrets em secret/dev/*             (Exit 0)
+  keycloak-init  → cria realm fincontrol, clients, roles    (Exit 0)
+  kong-init      → configura rotas, OIDC e key-auth         (Exit 0)
+        |
+        v
+  Infraestrutura pronta para as APIs .NET
+```
+
+Ver [INIT-CONTAINERS-CLEANUP.md](INIT-CONTAINERS-CLEANUP.md) para detalhes sobre os containers de init.
+
+## Arquivos de Inicializacao
 
 ```
 docker-init/
-├── postgres/init-databases.sql
-├── rabbitmq/rabbitmq.conf
-├── rabbitmq/definitions.json
-├── prometheus/prometheus.yml
-└── grafana/provisioning/
+├── postgres/
+│   └── init-databases.sql        (cria databases: fincontrol_lancamentos, keycloak, kong)
+├── rabbitmq/
+│   ├── rabbitmq.conf
+│   └── definitions.json
+├── vault/
+│   └── init-vault.sh             (cria secrets: postgres, redis, rabbitmq, grafana, keycloak, kong, vault)
+├── keycloak/
+│   └── keycloak-init.sh          (cria realm fincontrol, clients, usuarios de teste)
+├── kong/
+│   └── kong-init.sh              (configura services, routes, key-auth e OIDC)
+├── prometheus/
+│   └── prometheus.yml
+└── grafana/
+    └── provisioning/
 ```
 
-## ⚠️ Troubleshooting
+## Seguranca
 
-**Serviço não inicia:**
+- Secrets nunca ficam em appsettings ou variaveis de ambiente das APIs — sempre via Vault
+- `.env.docker` ignorado pelo Git (arquivo local apenas)
+- Credenciais acima sao APENAS para desenvolvimento local
+
+## Troubleshooting
+
+**Servico nao inicia:**
 ```bash
 docker-compose logs -f <nome_servico>
-docker-compose rm -f <nome_servico>
-docker-compose up <nome_servico>
+docker-compose rm -f <nome_servico> && docker-compose up <nome_servico>
 ```
 
-**Porta em uso:**
-```bash
-# Linux/Mac: lsof -i :5432
-# Windows: netstat -ano | findstr :5432
+**Porta em uso (Windows):**
+```powershell
+netstat -ano | findstr :5432
 ```
+
+**Vault nao inicializado (secrets ausentes):**
+```bash
+# Verificar logs do vault-init
+docker-compose logs vault-init
+
+# Re-executar vault-init manualmente
+docker-compose run --rm vault-init
+```
+
+**Keycloak nao inicializado (realm ausente):**
+```bash
+docker-compose logs keycloak-init
+```
+
+**API .NET falha com "Secret not found":**
+Confirmar que `vault-init` completou com exit 0 antes de subir as APIs.
 
 ---
 
-**Versão:** 1.0  
-**Última atualização:** Maio 2026  
-**Status:** ✅ Production-Ready (Com adaptações para ambiente local)
+**Versao:** 2.0
+**Ultima atualizacao:** Maio 2026
+**Status:** Ativo

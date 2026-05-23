@@ -1,326 +1,209 @@
-# Keycloak Setup - Passo a Passo
+# Keycloak Setup - FinControl
 
-## 🎯 Objetivo
+## Objetivo
 
-Configurar Keycloak com realm **agile** e cliente **kong-client** para integração com Kong Gateway.
+Configurar Keycloak com realm **fincontrol** e clientes **kong-client** e **fincontrol-api** para integracao com Kong Gateway e as APIs .NET.
+
+> **Nota:** A configuracao abaixo e feita **automaticamente** pelo container `keycloak-init` ao executar `docker-compose up -d`. Este guia serve para configuracao manual ou para recriar o ambiente em caso de falha do init.
 
 ---
 
-## 📍 Passo 1: Acessar Keycloak Admin Console
+## Acesso ao Keycloak Admin Console
 
 ```
-URL: http://localhost:8080
+URL:      http://localhost:8081
 Username: admin
-Password: agile_keycloak_password_123
+Password: fincontrol_keycloak_password_123
 ```
 
-## 📍 Passo 2: Criar Realm "agile"
+---
 
-### 2.1 - Menu de Realms
+## Passo 1: Criar Realm "fincontrol"
+
+### 1.1 - Menu de Realms
 ```
 [Canto superior esquerdo]
-  ▼ "Master" (dropdown)
-  ┗ Create Realm
+  v "Master" (dropdown)
+  |- Create Realm
 ```
 
-### 2.2 - Dados do Novo Realm
+### 1.2 - Dados do Novo Realm
 ```
-Realm name: agile
-Display name: Agile Workers Backend
+Realm name:   fincontrol
+Display name: FinControl Backend
 ```
 
-### 2.3 - Clique "Create"
-
-✅ Realm "agile" criado!
+Clique **Create**.
 
 ---
 
-## 📍 Passo 3: Criar Cliente Kong
+## Passo 2: Criar Cliente Kong (key-auth + OIDC)
 
-### 3.1 - Ir para Clients
-
-```
-Menu esquerdo:
-  Realm settings
-  ├─ Clients ◄─── CLIQUE AQUI
-  ├─ Client scopes
-  ├─ Roles
-  └─ Users
-```
-
-### 3.2 - Criar Novo Cliente
+### 2.1 - Ir para Clients
 
 ```
-Botão azul: "Create client"
+Menu esquerdo: Clients > Create client
 ```
 
-### 3.3 - General Settings
+### 2.2 - General Settings
 
 | Campo | Valor |
 |-------|-------|
 | **Client ID** | `kong-client` |
-| **Client Protocol** | `openid-connect` (já padrão) |
-| **Client name** | Kong Gateway |
+| **Client Protocol** | `openid-connect` |
 
-Clique "Next"
-
-### 3.4 - Capability Config
+### 2.3 - Capability Config
 
 ```
-✅ Client authentication (Enable)
-✅ Authorization (Enable)
-✅ Authentication flow binding overrides (Enable)
-□ Standard flow disabled
-✅ Direct access grants enabled
-✅ Implicit flow enabled
-✅ Service accounts roles
+[x] Client authentication
+[x] Service accounts roles
+[ ] Standard flow (desabilitar para M2M)
+[x] Direct access grants
 ```
 
-Clique "Next"
-
-### 3.5 - Login Settings
+### 2.4 - Login Settings
 
 ```
-Redirect URIs:
-  ✅ http://localhost:8000/api/
-  ✅ http://localhost:8000/*
-  
+Valid redirect URIs:
+  http://localhost:8000/*
+
 Web Origins:
-  ✅ http://localhost:8000
-  ✅ +
-  
-Post Logout Redirect URIs:
-  ✅ http://localhost:8000/api/
+  http://localhost:8000
 ```
 
-Clique "Save"
+Clique **Save**.
 
-✅ Cliente "kong-client" criado!
-
----
-
-## 📍 Passo 4: Obter Client Secret
-
-### 4.1 - Ir para Aba "Credentials"
-
-```
-[Cliente kong-client já aberto]
-  ├─ General (aba)
-  ├─ Capability config (aba)
-  ├─ Sessions (aba)
-  ├─ Keys (aba)
-  ├─ Roles (aba)
-  ├─ Credentials ◄─── CLIQUE AQUI
-  └─ Client scopes (aba)
-```
-
-### 4.2 - Copiar Client Secret
-
-```
-Credential type: Client secret
-┌─────────────────────────────────────────────┐
-│ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX    │
-│ [Copy] ◄─── CLIQUE AQUI                    │
-└─────────────────────────────────────────────┘
-```
-
-⚠️ **Guarde este secret com segurança!**
-
----
-
-## 📍 Passo 5: Criar Usuário de Teste (Opcional)
-
-### 5.1 - Ir para Users
-
-```
-Menu esquerdo:
-  Manage
-  ├─ Users ◄─── CLIQUE AQUI
-  ├─ Groups
-  ├─ Roles
-  └─ Permissions
-```
-
-### 5.2 - Adicionar Usuário
-
-```
-Botão: "Add user"
-
-Username: testuser
-Email: test@agile.local
-Email verified: ✅
-First name: Test
-Last name: User
-Enabled: ✅
-
-Clique "Create"
-```
-
-### 5.3 - Definir Senha
+### 2.5 - Obter Client Secret
 
 ```
 Aba: Credentials
-┌──────────────┐
-│ Set password │ ◄─── CLIQUE
-└──────────────┘
-
-Password: testuser123
-Temporary: ❌ (desmarque para senha permanente)
-
-Clique "Set password" ✅
+Credential type: Client secret
+[Copie o valor gerado]
 ```
+
+O `keycloak-init` salva esse secret no Vault automaticamente em `secret/dev/keycloak → kong_client_secret`.
 
 ---
 
-## 📍 Passo 6: Criar Roles (Opcional mas Recomendado)
+## Passo 3: Criar Cliente fincontrol-api (Swagger / M2M)
 
-### 6.1 - Ir para Realm Roles
+Repita o processo acima com:
 
-```
-Menu esquerdo:
-  Manage
-  ├─ Roles ◄─── CLIQUE AQUI
-```
-
-### 6.2 - Criar Papel "api-user"
-
-```
-Botão: "Create role"
-
-Role name: api-user
-Description: Usuários com acesso a APIs
-Display name: API User
-
-Clique "Save"
-```
-
-### 6.3 - Criar Papel "admin"
-
-```
-Botão: "Create role"
-
-Role name: admin
-Description: Administradores do sistema
-Display name: System Admin
-
-Clique "Save"
-```
+| Campo | Valor |
+|-------|-------|
+| **Client ID** | `fincontrol-api` |
+| Client authentication | habilitado |
+| Direct access grants | habilitado |
 
 ---
 
-## 📍 Passo 7: Atribuir Roles ao Usuário
-
-### 7.1 - Ir para Users > testuser
+## Passo 4: Criar Roles
 
 ```
-Menu esquerdo: Users
-Clique em "testuser"
-Aba: "Role mapping"
+Menu esquerdo: Realm roles > Create role
 ```
 
-### 7.2 - Atribuir Roles
-
-```
-"Assign role" dropdown:
-  ┗ Select roles...
-    ├─ api-user   ◄─── MARQUE
-    └─ admin      ◄─── MARQUE (opcional)
-
-Clique "Assign"
-```
+| Role | Descricao |
+|------|-----------|
+| `api-user` | Acesso de leitura/escrita nas APIs |
+| `admin` | Acesso administrativo |
 
 ---
 
-## 📍 Passo 8: Validar Configuração
+## Passo 5: Criar Usuarios de Teste
 
-### 8.1 - Verificar Cliente OIDC
+### 5.1 - Criar usuario
 
 ```
-URL da configuração OIDC:
-  http://localhost:8080/realms/agile/.well-known/openid-configuration
+Menu esquerdo: Users > Add user
+
+Username:       dev.user
+Email:          dev.user@fincontrol.local
+Email verified: [x]
+First name:     Dev
+Last name:      User
+Enabled:        [x]
 ```
 
-Deve retornar:
-```json
-{
-  "issuer": "http://localhost:8080/realms/agile",
-  "authorization_endpoint": "http://localhost:8080/realms/agile/protocol/openid-connect/auth",
-  "token_endpoint": "http://localhost:8080/realms/agile/protocol/openid-connect/token",
-  ...
-}
+### 5.2 - Definir senha
+
+```
+Aba: Credentials > Set password
+Password:   Dev@123456!
+Temporary:  [ ] (desmarcar)
 ```
 
-### 8.2 - Testar Obtenção de Token
+### 5.3 - Atribuir roles
+
+```
+Aba: Role mapping > Assign role
+Selecionar: api-user
+```
+
+Repetir para `dev.admin` com password `Admin@123456!` e roles `api-user` + `admin`.
+
+---
+
+## Passo 6: Validar Configuracao
+
+### OIDC Discovery
 
 ```bash
-curl -X POST http://localhost:8080/realms/agile/protocol/openid-connect/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=kong-client" \
-  -d "client_secret=<SEGREDO_COPIADO>" \
-  -d "grant_type=client_credentials"
+curl -s http://localhost:8081/realms/fincontrol/.well-known/openid-configuration | jq '{issuer, token_endpoint, jwks_uri}'
 ```
 
-Deve retornar:
+Resultado esperado:
 ```json
 {
-  "access_token": "eyJhbGciOiJSUzI1NiIsInR...",
-  "expires_in": 300,
-  "refresh_expires_in": 1800,
-  "token_type": "Bearer",
-  ...
+  "issuer": "http://localhost:8081/realms/fincontrol",
+  "token_endpoint": "http://localhost:8081/realms/fincontrol/protocol/openid-connect/token",
+  "jwks_uri": "http://localhost:8081/realms/fincontrol/protocol/openid-connect/certs"
 }
 ```
 
-✅ Keycloak configurado com sucesso!
+### Obter Token (client_credentials)
+
+```bash
+curl -s -X POST http://localhost:8081/realms/fincontrol/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=kong-client&client_secret=kong-secret&grant_type=client_credentials" | jq .access_token
+```
+
+### Obter Token (password flow — usuario de teste)
+
+```bash
+curl -s -X POST http://localhost:8081/realms/fincontrol/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=fincontrol-api&client_secret=fincontrol-api-secret&grant_type=password&username=dev.user&password=Dev@123456!" | jq .access_token
+```
 
 ---
 
-## 📚 Checklist de Configuração
+## Checklist de Configuracao
 
-- [ ] Realm "agile" criado
-- [ ] Cliente "kong-client" criado  
-- [ ] Client secret copiado
-- [ ] Redirect URIs configuradas
-- [ ] Web Origins configuradas
-- [ ] Usuário "testuser" criado (opcional)
-- [ ] Roles criadas (opcional)
-- [ ] Token obtido com sucesso (teste)
-
----
-
-## 🔗 Integrando com Kong
-
-Agora Kong pode usar os tokens do Keycloak! O plugin OIDC do Kong vai:
-
-1. Interceptar requisições em `http://localhost:8000/api/`
-2. Validar tokens JWT contra Keycloak
-3. Permitir requisições autenticadas
-4. Bloquear ou redirecionar não autenticadas
-
-**Kong Manager:** [http://localhost:8002](http://localhost:8002)
+- [ ] Realm "fincontrol" criado
+- [ ] Cliente "kong-client" criado com client authentication habilitado
+- [ ] Cliente "fincontrol-api" criado
+- [ ] Client secrets salvos no Vault (`secret/dev/keycloak`)
+- [ ] Roles `api-user` e `admin` criadas
+- [ ] Usuarios `dev.user` e `dev.admin` criados com senhas permanentes
+- [ ] OIDC discovery retornando issuer correto
+- [ ] Token obtido com sucesso
 
 ---
 
-## 🆘 Troubleshooting
+## Troubleshooting
 
-### Token inválido?
-- ✅ Verificar se Client Secret está correto
-- ✅ Verificar se realm é "agile" (não "master")
-- ✅ Verificar `grant_type` na requisição
-
-### CORS errors?
-- ✅ Configurar Web Origins corretos
-- ✅ Verificar se Kong está permitindo CORS
-
-### Kong não encontra Keycloak?
-- ✅ Verificar Docker network: `agile-network`
-- ✅ Container kong consegue fazer ping para keycloak?
-  ```bash
-  docker exec agile-kong ping keycloak
-  ```
+| Problema | Solucao |
+|----------|---------|
+| `Invalid client credentials` | Verificar client_secret no Vault: `secret/dev/keycloak → kong_client_secret` |
+| Realm nao encontrado | Verificar se e `fincontrol` (nao `master` nem `agile`) |
+| `connection refused` em :8081 | Keycloak ainda inicializando — aguardar healthcheck |
+| Kong nao valida tokens | Issuer no Kong deve ser `http://localhost:8081/realms/fincontrol` |
+| Container keycloak-init falhou | `docker-compose logs keycloak-init` para diagnostico |
 
 ---
 
-**Versão:** Keycloak latest | Kong 3.4-alpine  
-**Data:** Maio 2026  
-**Status:** ✅ Configuração Completa
+**Versao:** 2.0
+**Ultima atualizacao:** Maio 2026
+**Status:** Ativo (configuracao automatizada via keycloak-init)

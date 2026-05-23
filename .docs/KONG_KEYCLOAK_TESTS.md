@@ -1,385 +1,228 @@
-# 🧪 Kong + Keycloak Integration Tests
+# Kong + Keycloak Integration Tests
 
-**Teste prático:** Verificar que Kong está protegendo APIs com tokens Keycloak OIDC.
+Testes praticos para verificar que Kong esta protegendo as APIs corretamente.
 
----
+## Pre-requisitos
 
-## 📋 Prerequisites
-
-- Docker stack rodando: `docker-compose up -d`
-- Kong pronto: `http://localhost:8001/status` (HTTP 200)
-- Keycloak pronto: `http://localhost:8080/health/ready` (HTTP 200)
-- Realm "agile" e cliente "kong-client" configurados (ver KEYCLOAK_SETUP_GUIDE.md)
+- `docker-compose up -d` executado e todos os inits com `Exited (0)`
+- Kong respondendo: `http://localhost:8001/status` (HTTP 200)
+- Keycloak respondendo: `http://localhost:8081/health/ready` (HTTP 200)
+- Realm `fincontrol` e clientes configurados (ver [KEYCLOAK_SETUP_GUIDE.md](KEYCLOAK_SETUP_GUIDE.md))
 
 ---
 
-## 🧪 Teste 1: Verificar Kong Service & Route
+## Teste 1: Verificar Services e Routes no Kong
 
 ### Objetivo
-Confirmar que Kong tem o service e route configurados.
-
-### Comando
+Confirmar que kong-init criou os services e routes esperados.
 
 **PowerShell:**
 ```powershell
 # Listar services
-Invoke-WebRequest -Uri "http://localhost:8001/services" `
-  -Method GET | Select-Object -ExpandProperty Content | ConvertFrom-Json | 
-  Select-Object -ExpandProperty data | 
+(Invoke-WebRequest -Uri "http://localhost:8001/services" -Method GET).Content |
+  ConvertFrom-Json | Select-Object -ExpandProperty data |
   Format-Table name, url
 
 # Listar routes
-Invoke-WebRequest -Uri "http://localhost:8001/routes" `
-  -Method GET | Select-Object -ExpandProperty Content | ConvertFrom-Json |
-  Select-Object -ExpandProperty data |
-  Format-Table name, protocols, hosts, paths
+(Invoke-WebRequest -Uri "http://localhost:8001/routes" -Method GET).Content |
+  ConvertFrom-Json | Select-Object -ExpandProperty data |
+  Format-Table name, paths
 ```
 
-**Bash/cURL:**
+**Bash:**
 ```bash
-# Listar services
-curl -s http://localhost:8001/services | jq '.data[] | {name, url, protocol}'
-
-# Listar routes
-curl -s http://localhost:8001/routes | jq '.data[] | {name, protocols, hosts, paths}'
+curl -s http://localhost:8001/services | jq '.data[] | {name, url}'
+curl -s http://localhost:8001/routes | jq '.data[] | {name, paths}'
 ```
 
-### Expected Output
-```json
-{
-  "name": "agile-api",
-  "url": "http://agile-api:5000",
-  "protocol": "http"
-}
-
-{
-  "name": "agile-api-route",
-  "protocols": ["http"],
-  "hosts": ["api.localhost"],
-  "paths": ["/api"]
-}
+**Resultado esperado:**
+```
+fincontrol-lancamentos  →  /lancamentos
+fincontrol-consolidados →  /consolidados
 ```
 
-✅ **PASS** → Service e route existem  
-❌ **FAIL** → Verificar kong-init log
+PASS → Services e routes existem
+FAIL → Ver `docker-compose logs kong-init`
 
 ---
 
-## 🧪 Teste 2: Verificar Plugin OIDC
+## Teste 2: Verificar Plugins Ativos
 
 ### Objetivo
-Confirmar que o plugin OIDC está ativo na route.
+Confirmar que key-auth e oidc estao habilitados.
 
-### Comando
-
-**PowerShell:**
-```powershell
-Invoke-WebRequest -Uri "http://localhost:8001/routes/agile-api-route/plugins" `
-  -Method GET | Select-Object -ExpandProperty Content | ConvertFrom-Json |
-  Select-Object -ExpandProperty data |
-  Format-Table name, enabled
-```
-
-**Bash/cURL:**
+**Bash:**
 ```bash
-curl -s http://localhost:8001/routes/agile-api-route/plugins | \
-  jq '.data[] | {name, enabled, config}'
+curl -s http://localhost:8001/plugins | jq '.data[] | {name, enabled}'
 ```
 
-### Expected Output
+**Resultado esperado:**
 ```json
-{
-  "name": "oidc",
-  "enabled": true,
-  "config": {
-    "client_id": "kong-client",
-    "discovery": "http://keycloak:8080/realms/agile/.well-known/openid-configuration",
-    ...
-  }
-}
+{"name": "key-auth", "enabled": true}
+{"name": "oidc",     "enabled": true}
 ```
-
-✅ **PASS** → Plugin OIDC ativo  
-❌ **FAIL** → Kong init não completou
 
 ---
 
-## 🧪 Teste 3: Obter Token do Keycloak
+## Teste 3: Obter Token do Keycloak
 
 ### Objetivo
-Autenticar com Keycloak e obter JWT token.
-
-### Comando
+Autenticar com Keycloak e obter JWT.
 
 **PowerShell:**
 ```powershell
 $params = @{
-    Uri = "http://localhost:8080/realms/agile/protocol/openid-connect/token"
-    Method = "POST"
+    Uri     = "http://localhost:8081/realms/fincontrol/protocol/openid-connect/token"
+    Method  = "POST"
     Headers = @{"Content-Type" = "application/x-www-form-urlencoded"}
-    Body = "client_id=kong-client&client_secret=kong-secret&grant_type=client_credentials"
+    Body    = "client_id=fincontrol-api&client_secret=fincontrol-api-secret&grant_type=password&username=dev.user&password=Dev@123456!"
 }
-
-$response = Invoke-WebRequest @params
-$token = ($response.Content | ConvertFrom-Json).access_token
-Write-Host "Token obtido: $($token.Substring(0, 50))..."
+$TOKEN = (Invoke-WebRequest @params).Content | ConvertFrom-Json | Select-Object -ExpandProperty access_token
+Write-Host "Token: $($TOKEN.Substring(0,50))..."
 ```
 
-**Bash/cURL:**
+**Bash:**
 ```bash
 TOKEN=$(curl -s -X POST \
-  http://localhost:8080/realms/agile/protocol/openid-connect/token \
+  http://localhost:8081/realms/fincontrol/protocol/openid-connect/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=kong-client" \
-  -d "client_secret=kong-secret" \
-  -d "grant_type=client_credentials" | jq -r '.access_token')
-
-echo "Token: $TOKEN"
+  -d "client_id=fincontrol-api&client_secret=fincontrol-api-secret&grant_type=password&username=dev.user&password=Dev@123456!" \
+  | jq -r '.access_token')
+echo "Token: ${TOKEN:0:50}..."
 ```
 
-### Expected Output
-```
-Token obtido: eyJhbGciOiJSUzI1NiIsInR5cCI...
-```
-
-✅ **PASS** → Token obtido com sucesso  
-❌ **FAIL** → Verificar Keycloak config
+PASS → Token JWT retornado
+FAIL → Verificar credenciais em [KEYCLOAK_SETUP_GUIDE.md](KEYCLOAK_SETUP_GUIDE.md)
 
 ---
 
-## 🧪 Teste 4: Testar Acesso SEM Token (Deve ser Bloqueado)
+## Teste 4: Acesso Sem Subscription Key (deve ser bloqueado)
 
 ### Objetivo
-Confirmar que Kong bloqueia requisições sem autenticação.
+Confirmar que Kong rejeita requests sem `X-Subscription-Key`.
 
-### Comando
-
-**PowerShell:**
-```powershell
-try {
-    Invoke-WebRequest -Uri "http://localhost:8000/api/" `
-        -Method GET -ErrorAction Stop
-} catch {
-    Write-Host "Status Code: $($_.Exception.Response.StatusCode)"
-    Write-Host "Body: $($_.Exception.Response | Get-Content)"
-}
-```
-
-**Bash/cURL:**
+**Bash:**
 ```bash
-curl -v http://localhost:8000/api/
+curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/lancamentos/health
+# Esperado: 401
 ```
 
-### Expected Output
-```
-HTTP/1.1 302 Found
-Location: http://localhost:8080/realms/agile/protocol/openid-connect/auth?...
-```
-
-✅ **PASS** → Redirecionado para login Keycloak (302)  
-❌ **FAIL** → Plugin OIDC não ativo?
+PASS → HTTP 401 com `{"message":"No API key found in request"}`
+FAIL → Plugin key-auth nao esta ativo
 
 ---
 
-## 🧪 Teste 5: Testar Acesso COM Token Válido
+## Teste 5: Acesso Sem Token JWT (deve ser bloqueado)
 
 ### Objetivo
-Confirmar que Kong aceita requisições com token válido.
+Confirmar que Kong rejeita requests sem token JWT apos passar pelo key-auth.
 
-### Comando
+**Bash:**
+```bash
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "X-Subscription-Key: fc-lanc-dev-subkey-2026-abc123ef" \
+  http://localhost:8000/lancamentos/health
+# Esperado: 401 ou 302 (redirect para login Keycloak)
+```
+
+---
+
+## Teste 6: Acesso Com Ambas as Credenciais (deve passar)
+
+### Objetivo
+Confirmar que Kong encaminha request com key-auth + JWT validos.
 
 **PowerShell:**
 ```powershell
-# 1. Obter token
-$tokenResponse = Invoke-WebRequest -Uri "http://localhost:8080/realms/agile/protocol/openid-connect/token" `
-    -Method POST `
-    -Headers @{"Content-Type" = "application/x-www-form-urlencoded"} `
-    -Body "client_id=kong-client&client_secret=kong-secret&grant_type=client_credentials"
-
-$token = ($tokenResponse.Content | ConvertFrom-Json).access_token
-
-# 2. Usar token
-try {
-    $response = Invoke-WebRequest -Uri "http://localhost:8000/api/" `
-        -Method GET `
-        -Headers @{"Authorization" = "Bearer $token"}
-    
-    Write-Host "Status: $($response.StatusCode)"
-    Write-Host "Headers: $($response.Headers | ConvertTo-Json)"
-} catch {
-    Write-Host "Erro: $($_.Exception.Message)"
-}
+# Obter token primeiro (Teste 3)
+$response = Invoke-WebRequest -Uri "http://localhost:8000/lancamentos/health" `
+    -Headers @{
+        "X-Subscription-Key" = "fc-lanc-dev-subkey-2026-abc123ef"
+        "Authorization"      = "Bearer $TOKEN"
+    }
+Write-Host "Status: $($response.StatusCode)"
 ```
 
-**Bash/cURL:**
+**Bash:**
 ```bash
-# 1. Obter token
-TOKEN=$(curl -s -X POST \
-  http://localhost:8080/realms/agile/protocol/openid-connect/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=kong-client&client_secret=kong-secret&grant_type=client_credentials" | \
-  jq -r '.access_token')
-
-# 2. Usar token
-curl -v \
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "X-Subscription-Key: fc-lanc-dev-subkey-2026-abc123ef" \
   -H "Authorization: Bearer $TOKEN" \
-  http://localhost:8000/api/
+  http://localhost:8000/lancamentos/health
+# Esperado: 200
 ```
 
-### Expected Output
-```
-HTTP/1.1 200 OK
-(ou HTTP/1.1 404 Not Found se o serviço real não existir)
-```
-
-✅ **PASS** → Requisição passou pelo Kong (200/404)  
-❌ **FAIL** → Token inválido ou plugin com problema
+PASS → HTTP 200 (ou 404 se API ainda nao subiu)
+FAIL → Verificar token e subscription key
 
 ---
 
-## 🧪 Teste 6: Testar com Token Inválido
+## Teste 7: Token JWT Invalido (deve ser rejeitado)
 
-### Objetivo
-Confirmar que Kong rejeita tokens inválidos.
-
-### Comando
-
-**PowerShell:**
-```powershell
-$badToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.invalid.invalid"
-
-try {
-    Invoke-WebRequest -Uri "http://localhost:8000/api/" `
-        -Method GET `
-        -Headers @{"Authorization" = "Bearer $badToken"} `
-        -ErrorAction Stop
-} catch {
-    Write-Host "Status Code: $($_.Exception.Response.StatusCode)"
-}
-```
-
-**Bash/cURL:**
+**Bash:**
 ```bash
-curl -v \
-  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.invalid.invalid" \
-  http://localhost:8000/api/
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "X-Subscription-Key: fc-lanc-dev-subkey-2026-abc123ef" \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.invalid.invalid" \
+  http://localhost:8000/lancamentos/health
+# Esperado: 401
 ```
-
-### Expected Output
-```
-HTTP/1.1 401 Unauthorized
-{"error":"Unauthorized"}
-```
-
-✅ **PASS** → Token rejeitado (401)  
-❌ **FAIL** → Plugin não validando tokens?
 
 ---
 
-## 🧪 Teste 7: Verificar Kong Manager UI
+## Teste 8: OIDC Discovery do Keycloak
 
-### Objetivo
-Validar que Kong Manager consegue listar configurações.
-
-### Acesso
-```
-http://localhost:8002
-```
-
-### Verificações
-- [ ] Menu "Services" mostra "agile-api"
-- [ ] Menu "Routes" mostra "agile-api-route"
-- [ ] Route tem plugin OIDC ativo
-- [ ] Kong Dashboard mostra status OK
-
-✅ **PASS** → UI funcional e configuração visível  
-❌ **FAIL** → Problema com Kong Manager
-
----
-
-## 🧪 Teste 8: Validar OIDC Discovery
-
-### Objetivo
-Confirmar que Keycloak expõe metadata OIDC corretamente.
-
-### Comando
-
-**PowerShell:**
-```powershell
-$discovery = Invoke-WebRequest -Uri "http://localhost:8080/realms/agile/.well-known/openid-configuration" `
-    -Method GET | Select-Object -ExpandProperty Content | ConvertFrom-Json
-
-Write-Host "Issuer: $($discovery.issuer)"
-Write-Host "Token Endpoint: $($discovery.token_endpoint)"
-Write-Host "Authorization Endpoint: $($discovery.authorization_endpoint)"
-Write-Host "JWKS URI: $($discovery.jwks_uri)"
-```
-
-**Bash/cURL:**
+**Bash:**
 ```bash
-curl -s http://localhost:8080/realms/agile/.well-known/openid-configuration | \
-  jq '{issuer, token_endpoint, authorization_endpoint, jwks_uri}'
+curl -s http://localhost:8081/realms/fincontrol/.well-known/openid-configuration | \
+  jq '{issuer, token_endpoint, jwks_uri}'
 ```
 
-### Expected Output
+**Resultado esperado:**
 ```json
 {
-  "issuer": "http://localhost:8080/realms/agile",
-  "token_endpoint": "http://localhost:8080/realms/agile/protocol/openid-connect/token",
-  "authorization_endpoint": "http://localhost:8080/realms/agile/protocol/openid-connect/auth",
-  "jwks_uri": "http://localhost:8080/realms/agile/protocol/openid-connect/certs"
+  "issuer": "http://localhost:8081/realms/fincontrol",
+  "token_endpoint": "http://localhost:8081/realms/fincontrol/protocol/openid-connect/token",
+  "jwks_uri": "http://localhost:8081/realms/fincontrol/protocol/openid-connect/certs"
 }
 ```
 
-✅ **PASS** → OIDC Discovery funcional  
-❌ **FAIL** → Problema Keycloak
-
 ---
 
-## 📊 Test Report Template
+## Report Template
 
-```markdown
+```
 # Kong + Keycloak Integration Test Report
 Data: [DATA]
-Executor: [NOME]
-
-## Resultados
 
 | Teste | Status | Detalhes |
 |-------|--------|----------|
-| 1. Kong Service/Route | ✅ PASS | Service e route existem |
-| 2. Plugin OIDC | ✅ PASS | Plugin ativo e configurado |
-| 3. Token Keycloak | ✅ PASS | Token obtido com sucesso |
-| 4. Sem Token (Bloqueado) | ✅ PASS | 302 redirect para login |
-| 5. Com Token (Permitido) | ✅ PASS | 200/404 (serviço não existe) |
-| 6. Token Inválido | ✅ PASS | 401 Unauthorized |
-| 7. Kong Manager UI | ✅ PASS | UI acessível e funcional |
-| 8. OIDC Discovery | ✅ PASS | Metadata expostas corretamente |
-
-## Conclusão
-✅ **INTEGRAÇÃO FUNCIONANDO** - Todos os testes passaram!
-
-## Próximos Passos
-- [ ] Implementar autorização por roles
-- [ ] Testar rate limiting com Kong
-- [ ] Implementar logging centralizado
+| 1. Services/Routes     | PASS/FAIL | |
+| 2. Plugins ativos      | PASS/FAIL | |
+| 3. Token Keycloak      | PASS/FAIL | |
+| 4. Sem subscription key| PASS/FAIL | HTTP 401 esperado |
+| 5. Sem JWT             | PASS/FAIL | HTTP 401 esperado |
+| 6. Ambas credenciais   | PASS/FAIL | HTTP 200 esperado |
+| 7. JWT invalido        | PASS/FAIL | HTTP 401 esperado |
+| 8. OIDC Discovery      | PASS/FAIL | |
 ```
 
 ---
 
-## 🆘 Troubleshooting Rápido
+## Troubleshooting
 
-| Problema | Solução |
+| Problema | Solucao |
 |----------|---------|
-| `Connection refused` em Kong | Kong container não iniciou - `docker ps` |
-| `401 Unauthorized` | Token expirado ou secret incorreto |
-| `302 redirect` mas não autentica | Verificar realm e cliente no Keycloak |
-| Kong Manager não carrega | Ligar `http://localhost:8002` sem redirect |
-| Token válido mas ainda `401` | Limpar cache - `docker-compose restart kong` |
-| CORS error | Configurar `Web Origins` em Keycloak |
+| `Connection refused` em :8000 | Kong nao subiu — `docker-compose ps kong` |
+| `No API key found` | Adicionar header `X-Subscription-Key` |
+| `Invalid authentication credentials` | Verificar chave em Vault `secret/dev/kong` |
+| `401` com token valido | Verificar issuer — deve ser `http://localhost:8081/realms/fincontrol` |
+| Token expirado | Renovar token (TTL padrao: 300s) |
+| CORS error | Configurar Web Origins em Keycloak |
+| kong-init nao completou | `docker-compose logs kong-init` |
 
 ---
 
-**Status:** ✅ Testes prontos para execução  
-**Versão:** Kong 3.4 + Keycloak latest  
-**Data:** Maio 2026
+**Versao:** 2.0
+**Ultima atualizacao:** Maio 2026
+**Status:** Ativo

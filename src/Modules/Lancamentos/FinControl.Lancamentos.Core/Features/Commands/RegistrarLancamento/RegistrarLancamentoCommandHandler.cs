@@ -1,4 +1,4 @@
-using FinControl.Infrastructure.Messaging;
+using System.Text.Json;
 using FinControl.Lancamentos.Core.Context;
 using FinControl.Lancamentos.Core.Domain;
 using FinControl.SharedKernel.Domain.Events;
@@ -9,11 +9,11 @@ namespace FinControl.Lancamentos.Core.Features.Commands.RegistrarLancamento;
 
 public class RegistrarLancamentoCommandHandler(
     LancamentosDbContext db,
-    IRabbitMqPublisher publisher,
     ILogger<RegistrarLancamentoCommandHandler> logger)
 {
     private const string Exchange = "lancamentos.events";
     private const string RoutingKey = "lancamento.criado";
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<RegistrarLancamentoResponse> Handle(
         RegistrarLancamentoCommand command,
@@ -36,18 +36,48 @@ public class RegistrarLancamentoCommandHandler(
             CreatedByEmail = command.UsuarioEmail
         };
 
-        db.Set<Lancamento>().Add(lancamento);
-        await db.SaveChangesAsync(cancellationToken);
+        // Transação explícita para garantir atomicidade entre lancamento e outbox.
+        // O InMemoryDatabase não suporta transações reais; IsRelational() evita a exceção nos testes.
+        var useTransaction = db.Database.IsRelational();
+        var tx = useTransaction ? await db.Database.BeginTransactionAsync(cancellationToken) : null;
+        try
+        {
+            // 1ª gravação: persiste o lancamento e obtém Id + NavigationId gerados pelo banco
+            db.Set<Lancamento>().Add(lancamento);
+            await db.SaveChangesAsync(cancellationToken);
 
-        var evento = MapearParaEvento(lancamento, command);
+            // 2ª gravação: persiste o outbox com o payload completo (Id e NavigationId já preenchidos)
+            var evento = MapearParaEvento(lancamento, command);
+            db.Set<OutboxMessage>().Add(new OutboxMessage
+            {
+                MessageType = nameof(LancamentoRegistradoMessage),
+                Payload = JsonSerializer.Serialize(evento, JsonOptions),
+                Exchange = Exchange,
+                RoutingKey = RoutingKey,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync(cancellationToken);
 
-        await publisher.PublishAsync(evento, Exchange, RoutingKey, cancellationToken);
+            if (tx is not null)
+                await tx.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            if (tx is not null)
+                await tx.RollbackAsync(cancellationToken);
+            throw;
+        }
+        finally
+        {
+            if (tx is not null)
+                await tx.DisposeAsync();
+        }
 
         if (logger.IsEnabled(LogLevel.Information))
             logger.LogInformation(
-                "LancamentoRegistrado publicado | Exchange={Exchange} RoutingKey={RoutingKey} NavigationId={NavigationId} Modalidade={Modalidade} Valor={Valor} CorrelationId={CorrelationId}",
+                "LancamentoRegistrado enfileirado no outbox | Exchange={Exchange} RoutingKey={RoutingKey} LancamentoId={LancamentoId} NavigationId={NavigationId} Valor={Valor} CorrelationId={CorrelationId}",
                 Exchange, RoutingKey,
-                evento.NavigationId, evento.Modalidade, evento.Valor, evento.CorrelationId);
+                lancamento.Id, lancamento.NavigationId, lancamento.Valor, command.CorrelationId);
 
         return MapearParaResponse(lancamento);
     }

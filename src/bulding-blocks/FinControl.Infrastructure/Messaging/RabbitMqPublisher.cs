@@ -85,6 +85,40 @@ public sealed class RabbitMqPublisher : IRabbitMqPublisher, IAsyncDisposable
         }
     }
 
+    public async Task PublishRawAsync(
+        string payload,
+        string exchange,
+        string routingKey,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(_rabbitMqUri))
+        {
+            _logger.LogWarning(
+                "RabbitMQ não configurado — payload descartado (exchange={Exchange} routingKey={RoutingKey}).",
+                exchange, routingKey);
+            return;
+        }
+
+        var connection = await GetConnectionAsync(ct);
+        await using var channel = await connection.CreateChannelAsync(cancellationToken: ct);
+
+        var body = System.Text.Encoding.UTF8.GetBytes(payload);
+        var props = new BasicProperties { ContentType = "application/json", Persistent = true };
+
+        await channel.BasicPublishAsync(
+            exchange: exchange,
+            routingKey: routingKey,
+            mandatory: false,
+            basicProperties: props,
+            body: body,
+            cancellationToken: ct);
+
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation(
+                "Payload publicado | Exchange={Exchange} RoutingKey={RoutingKey}",
+                exchange, routingKey);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_connection is not null)

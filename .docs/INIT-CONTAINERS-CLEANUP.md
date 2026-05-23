@@ -1,254 +1,242 @@
-# 🚀 Fluxo de Inicialização - Agile Workers Backend
+# Sequencia de Inicializacao - FinControl Backend
 
-## 📋 Visão Geral
+## Visao Geral
 
-A infraestrutura utiliza **containers de inicialização** (`vault-init` e `kong-init`) que executam scripts de configuração e então encerram. Esses containers **não devem permanecer em execução** e podem ser removidos após conclusão bem-sucedida.
+A infraestrutura usa **tres containers de inicializacao** que executam scripts de configuracao e encerram. Eles nao devem permanecer em execucao apos completar com sucesso.
+
+```
+vault-init      → cria secrets no Vault
+keycloak-init   → cria realm, clients, roles e usuarios no Keycloak
+kong-init       → configura services, routes, key-auth e OIDC no Kong
+```
+
+Cada um depende do anterior via `depends_on: service_completed_successfully`.
 
 ---
 
-## 🔄 Sequência de Inicialização
+## Sequencia Completa
 
 ```
 docker-compose up -d
-        ↓
-┌─────────────────────────────────────┐
-│ FASE 1: Serviços de Infraestrutura  │
-└─────────────────────────────────────┘
-        ↓
-  ✓ PostgreSQL (5-10s)
-  ✓ Redis (3-5s)
-  ✓ RabbitMQ (5-10s)
-  ✓ Prometheus (10-15s)
-  ✓ Jaeger (5-10s)
-  ✓ Vault (15-20s)
-        ↓
-┌─────────────────────────────────────┐
-│ FASE 2: Serviços de Aplicação       │
-└─────────────────────────────────────┘
-        ↓
-  ✓ Keycloak (20-30s)
-  ✓ Kong (15-25s)
-  ✓ Grafana (quando Prometheus ✓)
-        ↓
-┌─────────────────────────────────────┐
-│ FASE 3: Inicialização Automática    │
-└─────────────────────────────────────┘
-        ↓
-  ⚡ vault-init (quando Vault ✓)
-     └─→ Cria secrets em secret/dev/*
-     └─→ Exit code 0 → COMPLETO
-        ↓
-  ⚡ kong-init (quando Kong + Keycloak ✓)
-     └─→ Registra OIDC em Kong
-     └─→ Exit code 0 → COMPLETO
-        ↓
-🎉 INFRAESTRUTURA PRONTA
+        |
+        v
+[FASE 1 - Infra]
+  fincontrol-postgres    (5-10s)   → healthcheck: pg_isready
+  fincontrol-redis       (3-5s)    → healthcheck: redis-cli ping
+  fincontrol-rabbitmq    (5-10s)   → healthcheck: rabbitmq-diagnostics ping
+  fincontrol-vault       (15-20s)  → healthcheck: /v1/sys/health
+  fincontrol-jaeger      (5-10s)   → healthcheck: wget /
+  fincontrol-prometheus  (10-15s)  → healthcheck: wget /-/healthy
+        |
+        v
+[FASE 2 - Plataforma]
+  fincontrol-keycloak    (20-30s)  → healthcheck: TCP :8080 aberto
+  fincontrol-kong        (15-25s)  → healthcheck: TCP :8001 aberto
+  fincontrol-grafana     (10-20s)  → healthcheck: /api/health
+        |
+        v
+[FASE 3 - Inicializacao Automatica]
+  fincontrol-vault-init     (5-10s)  → cria secret/dev/* no Vault
+        |
+        v
+  fincontrol-keycloak-init  (5-10s)  → cria realm fincontrol, clients, roles, usuarios
+        |
+        v
+  fincontrol-kong-init      (5-10s)  → registra services, routes, key-auth, OIDC
+        |
+        v
+  Exited (0) x3  → INFRAESTRUTURA PRONTA
 ```
 
----
-
-## ⏱️ Timing Esperado
-
-| Fase | Container | Tempo de Startup | Status |
-|------|-----------|-----------------|--------|
-| 1 | PostgreSQL | 5-10s | healthy |
-| 1 | Redis | 3-5s | healthy |
-| 1 | RabbitMQ | 5-10s | healthy |
-| 1 | Prometheus | 10-15s | healthy |
-| 1 | Vault | 15-20s | healthy |
-| 2 | Keycloak | 20-30s | healthy |
-| 2 | Kong | 15-25s | healthy |
-| 2 | Grafana | 10-20s | healthy |
-| 3 | vault-init | 5-10s | Exited (0) ← REMOVER |
-| 3 | kong-init | 5-10s | Exited (0) ← REMOVER |
-
-**Tempo Total:** ~90-120 segundos até pronto para uso
+**Tempo total estimado:** 90-120 segundos
 
 ---
 
-## 📍 Monitoramento de Status
+## Timing por Container
 
-### Verificar status em tempo real:
+| Container | Tempo de Startup | Status Esperado |
+|-----------|-----------------|-----------------|
+| fincontrol-postgres | 5-10s | healthy |
+| fincontrol-redis | 3-5s | healthy |
+| fincontrol-rabbitmq | 5-10s | healthy |
+| fincontrol-vault | 15-20s | healthy |
+| fincontrol-jaeger | 5-10s | healthy |
+| fincontrol-prometheus | 10-15s | healthy |
+| fincontrol-keycloak | 20-30s | healthy |
+| fincontrol-kong | 15-25s | healthy |
+| fincontrol-grafana | 10-20s | healthy |
+| fincontrol-vault-init | 5-10s | **Exited (0)** |
+| fincontrol-keycloak-init | 5-10s | **Exited (0)** |
+| fincontrol-kong-init | 5-10s | **Exited (0)** |
+
+---
+
+## Monitoramento de Status
+
 ```powershell
 # Ver todos os containers
 docker-compose ps
 
-# Ver apenas containers em execução
-docker-compose ps --filter "status=running"
-
-# Monitorar logs de um serviço
-docker-compose logs -f vault-init      # Vault initialization
-docker-compose logs -f kong-init       # Kong OIDC setup
-docker-compose logs -f keycloak        # Keycloak startup
+# Monitorar logs dos inits em tempo real
+docker-compose logs -f vault-init
+docker-compose logs -f keycloak-init
+docker-compose logs -f kong-init
 ```
 
-### Sinais de Sucesso:
+### Sinais de Sucesso
 
-✅ **Vault Init Completo:**
+**vault-init:**
 ```
-Vault está acessível!
-   Status: UNSEALED
-✓  Secret criado com sucesso (postgres)
-✓  Secret criado com sucesso (redis)
-✓  Secret criado com sucesso (rabbitmq)
-✓  Secret criado com sucesso (grafana)
-✓  Secret criado com sucesso (vault)
-Vault initialized successfully. Container can now be removed.
+Todos os secrets foram inicializados com sucesso!
 ```
 
-✅ **Kong Init Completo:**
+**keycloak-init:**
 ```
-Creating Service: agile-api
-Creating Route: agile-api-route
-Registering OIDC Plugin
-Kong OIDC configured successfully. Container can now be removed.
+Keycloak inicializado com sucesso!
+```
+
+**kong-init:**
+```
+Kong OIDC configurado com sucesso!
 ```
 
 ---
 
-## 🧹 Limpeza de Containers de Inicialização
+## Limpeza dos Containers de Inicializacao
 
-### ⚙️ Método 1: Script Automático (RECOMENDADO)
+Os containers de init ficam com status `Exited (0)` apos conclusao. Podem ser removidos a qualquer momento.
+
+### Via script
 
 ```powershell
-# Navegar até o repositório
-cd F:\Projetos\AgileWorkers\arquitetura-backend-2026
-
-# Executar script de limpeza
 .\scripts\Cleanup-Init-Containers.ps1
 ```
 
-**O script irá:**
-✓ Verificar logs de ambos os containers  
-✓ Remover agile-vault-init  
-✓ Remover agile-kong-init  
-✓ Exibir resumo da limpeza  
-
-### ⚙️ Método 2: Comandos Manuais
+### Manualmente
 
 ```powershell
-# Remover vault-init
-docker rm -f agile-vault-init
-
-# Remover kong-init
-docker rm -f agile-kong-init
-
-# Verificar que foram removidos
-docker-compose ps
+docker rm -f fincontrol-vault-init fincontrol-keycloak-init fincontrol-kong-init
 ```
 
-### ⚙️ Método 3: Remover Via Docker Compose
+### Via docker-compose
 
 ```powershell
-docker-compose rm -f agile-vault-init agile-kong-init
+docker-compose rm -f vault-init keycloak-init kong-init
 ```
 
 ---
 
-## ⚠️ Considerações Importantes
+## Containers Permanentes vs. Temporarios
 
-### 🔴 NÃO REMOVA:
-- ❌ `agile-postgres` - Banco de dados principal
-- ❌ `agile-redis` - Cache distribuído
-- ❌ `agile-rabbitmq` - Message broker
-- ❌ `agile-vault` - Gerenciador de secrets
-- ❌ `agile-kong` - API Gateway
-- ❌ `agile-keycloak` - Identity Provider
-- ❌ `agile-prometheus` / `agile-grafana` - Observabilidade
-- ❌ `agile-jaeger` - Tracing distribuído
+### NAO REMOVA:
+- `fincontrol-postgres` — banco principal
+- `fincontrol-redis` — cache distribuido
+- `fincontrol-rabbitmq` — message broker
+- `fincontrol-vault` — secrets manager
+- `fincontrol-keycloak` — identity provider
+- `fincontrol-kong` — API gateway
+- `fincontrol-prometheus` / `fincontrol-grafana` — observabilidade
+- `fincontrol-jaeger` — tracing distribuido
 
-### ✅ SEGURO REMOVER:
-- ✅ `agile-vault-init` - Apenas executa uma vez
-- ✅ `agile-kong-init` - Apenas configura na startup
+### SEGURO REMOVER (apos Exited 0):
+- `fincontrol-vault-init`
+- `fincontrol-keycloak-init`
+- `fincontrol-kong-init`
 
 ---
 
-## 🔍 Troubleshooting
+## Estado Esperado Pos-Inicializacao
 
-### Problema: vault-init ainda em execução após 30s
+```
+NAME                       IMAGE                    STATUS
+fincontrol-postgres        postgres:16-alpine       Up (healthy)
+fincontrol-redis           redis:7-alpine           Up (healthy)
+fincontrol-rabbitmq        rabbitmq:3.12-mgmt       Up (healthy)
+fincontrol-vault           hashicorp/vault:1.15     Up (healthy)
+fincontrol-keycloak        keycloak/keycloak        Up (healthy)
+fincontrol-kong            kong:3.4                 Up (healthy)
+fincontrol-prometheus      prom/prometheus          Up (healthy)
+fincontrol-grafana         grafana/grafana          Up (healthy)
+fincontrol-jaeger          jaegertracing/all-in-one Up (unhealthy*)
+
+(* Jaeger healthcheck via wget pode ser flaky — nao impede o funcionamento)
+```
+
+---
+
+## Troubleshooting
+
+### vault-init falhou
 
 ```powershell
-# Ver logs detalhados
 docker-compose logs vault-init
 
-# Possíveis causas:
-# 1. Vault ainda inicializando → aguarde mais 10-20s
-# 2. Conexão com Vault falhou → verificar logs do vault
-# 3. Erro no script → revisar curl requests
+# Causas comuns:
+# 1. Vault ainda inicializando — aguardar mais 20s
+# 2. Vault nao passou no healthcheck — verificar docker-compose ps vault
+
+# Reexecutar:
+docker-compose run --rm vault-init
 ```
 
-### Problema: kong-init falhou
+### keycloak-init falhou
 
 ```powershell
-# Ver logs
+docker-compose logs keycloak-init
+
+# Causas comuns:
+# 1. Keycloak ainda inicializando (pode demorar 30-60s)
+# 2. vault-init nao completou (keycloak-init depende dele)
+# 3. DB do Keycloak nao inicializado
+
+# Reexecutar:
+docker-compose run --rm keycloak-init
+```
+
+### kong-init falhou
+
+```powershell
 docker-compose logs kong-init
 
-# Possíveis causas:
-# 1. Keycloak não está saudável → verificar logs do keycloak
-# 2. Kong ainda inicializando → aguarde mais 20-30s
-# 3. Client OAuth não registrado → configurar manualmente no Keycloak
+# Causas comuns:
+# 1. keycloak-init nao completou
+# 2. Kong ainda executando migrations do bootstrap
+# 3. Client secret do Keycloak nao foi salvo no Vault
 
-# Configuração manual:
-# 1. Acessar http://localhost:8081/admin
-# 2. Login: admin / agile_keycloak_password_123
-# 3. Criar realm "agile"
-# 4. Criar Client "kong-client" com secret
+# Reexecutar:
+docker-compose run --rm kong-init
 ```
 
-### Problema: "Container does not exist" ao tentar remover
+### "Container does not exist" ao tentar remover
 
-```powershell
-# É normal - significa que já foi removido anteriormente
-# Verifique com:
-docker ps -a | grep init
-
-# Se não aparecer, container já foi removido com sucesso ✓
+Normal — o container ja foi removido anteriormente. Verificar com:
+```bash
+docker ps -a | grep fincontrol.*init
 ```
 
 ---
 
-## 📝 Status Pós-Inicialização
+## Proximos Passos
 
-Após remover os containers de inicialização, seu `docker-compose ps` deve mostrar:
+Apos todos os inits com `Exited (0)`:
 
-```
-NAME                IMAGE                         STATUS
-agile-postgres      postgres:16-alpine            Up (healthy)
-agile-redis         redis:7-alpine                Up (healthy)
-agile-rabbitmq      rabbitmq:3.12-management     Up (healthy)
-agile-vault         hashicorp/vault:1.15          Up (healthy)
-agile-keycloak      keycloak/keycloak:latest      Up (healthy)
-agile-kong          kong:3.4                      Up (healthy)
-agile-prometheus    prom/prometheus:latest        Up (healthy)
-agile-grafana       grafana/grafana:latest        Up (healthy)
-agile-jaeger        jaegertracing/all-in-one      Up (unhealthy) ⚠️
-agile-vault-init    REMOVIDO ✓
-agile-kong-init     REMOVIDO ✓
-```
+1. Verificar saude dos servicos: `docker-compose ps`
+2. Confirmar secrets no Vault: http://localhost:8200/ui
+3. Confirmar realm no Keycloak: http://localhost:8081
+4. Confirmar rotas no Kong: http://localhost:8002
+5. Iniciar as APIs .NET (migrations aplicadas automaticamente)
 
 ---
 
-## 🎯 Próximas Etapas
+## Referencias
 
-Após inicialização completa:
-
-1. ✅ Verificar todos containers saudáveis: `docker-compose ps`
-2. ✅ Remover containers de inicialização: `.\scripts\Cleanup-Init-Containers.ps1`
-3. ✅ Acessar painéis:
-   - Grafana: http://localhost:3000 (admin/agile_grafana_password_123)
-   - Keycloak: http://localhost:8081/admin (admin/agile_keycloak_password_123)
-   - Kong Manager: http://localhost:8002
-   - Jaeger: http://localhost:16686
-   - Prometheus: http://localhost:9090
-   - Vault: http://localhost:8200/ui
-4. ✅ Iniciar backend .NET 10+ com configuração OpenTelemetry
-5. ✅ Executar testes de integração
+- [VAULT-INITIALIZATION.md](VAULT-INITIALIZATION.md)
+- [KEYCLOAK_SETUP_GUIDE.md](KEYCLOAK_SETUP_GUIDE.md)
+- [KONG_KEYCLOAK_OIDC.md](KONG_KEYCLOAK_OIDC.md)
+- [DOCKER-COMPOSE-EXECUTION-GUIDE.md](DOCKER-COMPOSE-EXECUTION-GUIDE.md)
 
 ---
 
-## 📚 Referências
-
-- [Docker Compose - restart policy](https://docs.docker.com/compose/compose-file/#restart_policy)
-- [Vault - Dev Server](https://www.vaultproject.io/docs/concepts/dev-server)
-- [Kong - Admin API](https://docs.konghq.com/gateway/latest/admin-api/)
-- [Keycloak - Server Administration](https://www.keycloak.org/docs/latest/server_admin/)
+**Versao:** 2.0
+**Ultima atualizacao:** Maio 2026
+**Status:** Ativo

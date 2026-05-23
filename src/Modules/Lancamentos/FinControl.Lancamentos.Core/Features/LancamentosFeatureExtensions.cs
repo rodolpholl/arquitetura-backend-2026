@@ -1,6 +1,7 @@
 using FinControl.Infrastructure.Extensions;
 using FinControl.Lancamentos.Core.Context;
 using FinControl.Lancamentos.Core.Features.Commands.RegistrarLancamento;
+using FinControl.Lancamentos.Core.Outbox;
 using FluentValidation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,6 +34,9 @@ public static class LancamentosFeatureExtensions
         // Registrar validators FluentValidation (auto-descoberta por interface AbstractValidator<T>)
         builder.Services.AddValidatorsFromAssemblyContaining<RegistrarLancamentoCommandValidator>(
             lifetime: ServiceLifetime.Transient);
+
+        // Relay service: lê mensagens pendentes do outbox e entrega ao RabbitMQ via Polly retry
+        builder.Services.AddHostedService<OutboxRelayService>();
 
         return builder;
     }

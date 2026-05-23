@@ -1,213 +1,158 @@
-# 🔐 Vault Initialization Flow
+# Vault Initialization Flow
 
 ## Overview
 
-O sistema de inicialização automática do Vault foi otimizado para garantir que:
+O Vault e inicializado automaticamente pelo container `vault-init` apos o Vault ficar saudavel.
 
-1. **Vault inicia** e fica saudável (`service_healthy`)
-2. **vault-init** aguarda Vault ficar pronto
-3. **vault-init** executa `/bin/bash /scripts/init-vault.sh` com bash nativo (não sh)
-4. **Secrets são criados** automaticamente em `secret/dev/*`
+Fluxo:
+1. **Vault** inicia em modo dev com token fixo `fincontrol_dev_token_12345`
+2. **vault-init** aguarda o healthcheck do Vault passar
+3. **vault-init** executa `/scripts/init-vault.sh` criando todos os secrets em `secret/dev/*`
+4. Container encerra com exit 0
 
-## Fluxo de Execução
+Em seguida, `keycloak-init` aguarda `vault-init` completar antes de configurar o Keycloak.
 
-```mermaid
-graph TD
-    A["docker-compose up -d"] --> B["Vault inicia"]
-    B --> C{"Healthcheck\npassou?"}
-    C -->|Não| D["Aguarda 5s<br/>Retenta"]
-    D --> C
-    C -->|Sim| E["vault-init inicia<br/>depends_on: service_healthy"]
-    E --> F["Instala dependências<br/>apk add --no-cache bash curl"]
-    F --> G["/bin/bash /scripts/init-vault.sh"]
-    G --> H["Conecta ao Vault"]
-    H --> I["Cria secrets"]
-    I --> J["📋 postgres<br/>⚡ redis<br/>🐰 rabbitmq<br/>📊 grafana<br/>🔑 vault"]
-    J --> K["Verifica secrets criados"]
-    K --> L["✅ Container finaliza"]
+---
+
+## Secrets Criados
+
+| Secret Path | Chaves | Consumidor |
+|-------------|--------|------------|
+| `secret/dev/postgres` | `connection_string`, username, password, host, port | APIs .NET via `VaultKeys.PostgresConnection` |
+| `secret/dev/redis` | `connection_string`, password, host, port | APIs .NET via `VaultKeys.RedisConnection` |
+| `secret/dev/rabbitmq` | `uri`, username, password, vhost, host, port | APIs .NET via `VaultKeys.RabbitMqUri` |
+| `secret/dev/grafana` | `loki_url`, `otlp_endpoint`, `prometheus_pushgateway` | APIs .NET via `VaultKeys.LokiUrl` etc. |
+| `secret/dev/keycloak` | `realm`, `url`, `issuer`, `jwks_uri`, `kong_client_id`, `kong_client_secret`, `api_client_id`, `api_client_secret` | APIs .NET via `VaultKeys.Keycloak*` |
+| `secret/dev/kong` | `lancamentos_subscription_key`, `consolidados_subscription_key` | APIs .NET via `VaultKeys.Kong*SubscriptionKey` |
+| `secret/dev/vault` | `root_token` | Metadados internos |
+
+### Como as chaves sao lidas no .NET
+
+O `VaultConfigurationProvider` usa o ultimo segmento do path como namespace:
+
+```
+secret/dev/postgres → key "connection_string"
+    => IConfiguration["postgres:connection_string"]
+
+secret/dev/keycloak → key "realm"
+    => IConfiguration["keycloak:realm"]
 ```
 
-## Detalhes Técnicos
+Acesse sempre via `builder.Configuration[VaultKeys.CONSTANTE]`.
 
-### Entrypoint Correto
+---
+
+## Detalhes do Container vault-init
 
 ```yaml
 vault-init:
   image: alpine:3.19
+  container_name: fincontrol-vault-init
   depends_on:
     vault:
       condition: service_healthy
   environment:
     VAULT_ADDR: http://vault:8200
-    VAULT_TOKEN: agile_dev_token_12345
+    VAULT_TOKEN: fincontrol_dev_token_12345
     VAULT_ENV: dev
   entrypoint: /bin/sh
-  command:
-    - -c
-    - |
-      set -e
-      apk add --no-cache bash curl
-      /bin/bash /scripts/init-vault.sh
-      echo "✅ Vault inicializado com sucesso!"
+  command: |
+    apk add --no-cache bash curl
+    /bin/bash /scripts/init-vault.sh
+  restart: no
 ```
 
-### Por que essa estrutura funciona?
+O script usa `bash` (nao `sh`) por precisar de:
+- `${VAR:-default}` — parameter expansion
+- `set -euo pipefail` — bash strict mode
+- `local -a array=("$@")` — declaracao de array
 
-1. **Entrypoint `/bin/sh`** — Inicia o container com POSIX shell
-2. **apk add bash curl** — Instala dependencies
-3. **/bin/bash /scripts/init-vault.sh** — Executa o script COM bash, não com sh
-4. **set -e** — Falha se qualquer comando der erro
-
-### Pontos-chave do Script
-
-```bash
-#!/bin/bash
-set -euo pipefail
-
-# Variáveis com defaults
-VAULT_ADDR="${VAULT_ADDR:-http://vault:8200}"
-VAULT_TOKEN="${VAULT_TOKEN:-agile_dev_token_12345}"
-VAULT_ENV="${VAULT_ENV:-dev}"
-```
-
-**✅ Essas linhas PRECISAM de bash**, não funcionam com `/bin/sh`:
-- `${VAULT_ADDR:-http://vault:8200}` ← Parameter expansion
-- `set -euo pipefail` ← Bash strict mode
-- `local -a secret_data=("$@")` ← Array declaration
-
-## Secrets Criados
-
-| Secret | Path | Dados |
-|--------|------|-------|
-| **PostgreSQL** | `secret/dev/postgres` | username, password, host, port |
-| **Redis** | `secret/dev/redis` | password, host, port |
-| **RabbitMQ** | `secret/dev/rabbitmq` | username, password, vhost, host, port |
-| **Grafana** | `secret/dev/grafana` | admin_password, admin_username |
-| **Vault** | `secret/dev/vault` | root_token |
+---
 
 ## Como Verificar
 
-### 1. Acessar Vault UI
-```bash
-# Abra no navegador
-http://localhost:8200/ui
+### 1. Vault UI
 
-# Use o token
-agile_dev_token_12345
+```
+http://localhost:8200/ui
+Token: fincontrol_dev_token_12345
 ```
 
-### 2. Navegar para Secrets
-1. Clique em "secret/" no menu lateral
-2. Clique em "dev/"
-3. Você verá os 5 secrets criados
+Navegue para `secret > dev >` — voce deve ver: `grafana`, `keycloak`, `kong`, `postgres`, `rabbitmq`, `redis`, `vault`.
 
-### 3. Verificar via CLI
+### 2. Via CLI
 
 ```bash
 # Entrar no container vault
 docker-compose exec vault sh
 
-# Ver secrets
+# Ler um secret
 vault kv get secret/dev/postgres
-vault kv get secret/dev/redis
-vault kv get secret/dev/rabbitmq
+vault kv get secret/dev/keycloak
+vault kv get secret/dev/kong
 ```
 
-### 4. Verificar Logs
+### 3. Ver logs
 
 ```bash
-# Ver logs de vault-init
 docker-compose logs vault-init --tail 50
-
-# Ver logs de Vault
-docker-compose logs vault --tail 20
 ```
+
+Saida esperada ao final:
+```
+Todos os secrets foram inicializados com sucesso!
+```
+
+---
 
 ## Troubleshooting
 
-### ❌ Vault Init Container não executa
+### vault-init termina com Exited (1)
 
-**Sintoma**: `docker-compose ps` mostra `vault-init Exited (1)`
-
-**Causas possíveis**:
-1. Vault não está `service_healthy`
-2. `/scripts/init-vault.sh` não tem permissão de leitura
-3. Bash não está instalado
-
-**Solução**:
 ```bash
-# Verificar logs
+# Ver erro detalhado
 docker-compose logs vault-init
 
-# Verificar se vault está healthy
-docker-compose exec vault curl -s http://localhost:8200/v1/sys/health
+# Causas comuns:
+# 1. Vault ainda inicializando — aguarde mais 20s e tente novamente
+# 2. Permissao negada no script — verificar montagem do volume
 
-# Restartar
-docker-compose down && docker-compose up -d
+# Re-executar:
+docker-compose rm -f vault-init
+docker-compose run --rm vault-init
 ```
 
-### ❌ Secrets não estão sendo criados
+### Secrets nao aparecem na UI
 
-**Sintoma**: Vault UI mostra `secret/dev/` vazio
+```bash
+# Confirmar que vault-init completou com sucesso
+docker-compose logs vault-init | grep -E "(sucesso|Error)"
 
-**Verificar**:
-1. vault-init executou completamente?
-   ```bash
-   docker-compose logs vault-init | grep "✅"
-   ```
-
-2. Script conseguiu conectar ao Vault?
-   ```bash
-   docker-compose logs vault-init | grep "Vault está acessível"
-   ```
-
-3. Curl consegue fazer request ao Vault?
-   ```bash
-   docker-compose exec vault apk add --no-cache curl
-   docker-compose exec vault curl -H "X-Vault-Token: agile_dev_token_12345" \
-     http://localhost:8200/v1/secret/data/dev/postgres
-   ```
-
-### ✅ Tudo funcionando
-
-Você verá no logs:
-```
-🔐 Inicializador de Secrets - Agile Workers Backend
-
-ℹ  Configurações:
-   • Vault Address: http://vault:8200
-   • Environment: dev
-   • Token: agile_...***
-
-ℹ  Testando conexão com Vault...
-✓  Vault está acessível!
-
-════════════════════════════════════════════════════════
-  Criando Secrets no Vault (dev)
-════════════════════════════════════════════════════════
-
-🗄️  PostgreSQL
-ℹ  Criando secret: postgres
-✓  Secret criado com sucesso
-
-... (mais secrets) ...
-
-✓  Todos os secrets foram inicializados com sucesso!
+# Verificar conexao
+curl -s http://localhost:8200/v1/sys/health | jq .sealed
+# Deve retornar: false
 ```
 
-## Próximas Etapas
+### API .NET falha com "Secret not found"
 
-Após `vault-init` completar com sucesso:
+A API lanca excecao explicita ao subir se qualquer secret obrigatorio nao estiver no Vault. Verifique:
 
-1. **kong-init** irá iniciar (tem `depends_on: vault service_healthy`)
-2. **Seus serviços** podem acessar secrets via Vault API
-3. **Cleanup**: Remova containers vault-init e kong-init após completarem
-   ```bash
-   docker-compose rm -f vault-init kong-init
-   ```
+1. `docker-compose ps vault-init` — deve mostrar `Exited (0)`
+2. `docker-compose logs vault-init | tail -5` — deve mostrar sucesso
+3. Confirme que `vault.settings.json` lista os paths corretos (`dev/postgres`, `dev/redis`, etc.)
 
-## Referências
+---
 
-- [Vault API - KV Secrets](https://www.vaultproject.io/api-docs/secret/kv/kv-v2)
-- [Docker Compose Healthchecks](https://docs.docker.com/compose/compose-file/compose-file-v3/#healthcheck)
-- [depends_on with Conditions](https://docs.docker.com/compose/compose-file/compose-file-v3/#depends_on)
+## Proximas Etapas Pos-Inicializacao
+
+1. `vault-init` completa → `keycloak-init` inicia automaticamente
+2. `keycloak-init` completa → `kong-init` inicia automaticamente
+3. Todos os inits com `Exited (0)` → infraestrutura pronta para as APIs .NET
+
+Ver [INIT-CONTAINERS-CLEANUP.md](INIT-CONTAINERS-CLEANUP.md) para remover os containers de init apos conclusao.
+
+---
+
+**Versao:** 2.0
+**Ultima atualizacao:** Maio 2026
+**Status:** Ativo

@@ -1,9 +1,9 @@
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
-using Moq;
-using FinControl.Infrastructure.Messaging;
 using FinControl.Lancamentos.Core.Context;
+using FinControl.Lancamentos.Core.Domain;
 using FinControl.Lancamentos.Core.Domain.Enums;
 using FinControl.Lancamentos.Core.Features.Commands.RegistrarLancamento;
 using FinControl.Lancamentos.Tests.Fakers;
@@ -13,17 +13,15 @@ namespace FinControl.Lancamentos.Tests.Features.Commands;
 
 public class RegistrarLancamentoCommandHandlerTests
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
     private static LancamentosDbContext CreateDbContext() =>
         new(new DbContextOptionsBuilder<LancamentosDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options);
 
-    private static RegistrarLancamentoCommandHandler CreateHandler(
-        LancamentosDbContext db,
-        Mock<IRabbitMqPublisher>? publisherMock = null) =>
-        new(db,
-            (publisherMock ?? new Mock<IRabbitMqPublisher>()).Object,
-            NullLogger<RegistrarLancamentoCommandHandler>.Instance);
+    private static RegistrarLancamentoCommandHandler CreateHandler(LancamentosDbContext db) =>
+        new(db, NullLogger<RegistrarLancamentoCommandHandler>.Instance);
 
     // ── Persistência ────────────────────────────────────────────────────────
 
@@ -32,9 +30,8 @@ public class RegistrarLancamentoCommandHandlerTests
     {
         await using var db = CreateDbContext();
         var handler = CreateHandler(db);
-        var command = LancamentoCommandFaker.ValidVenda(1500);
 
-        await handler.Handle(command);
+        await handler.Handle(LancamentoCommandFaker.ValidVenda(1500));
 
         db.Lancamentos.Should().HaveCount(1);
     }
@@ -108,59 +105,70 @@ public class RegistrarLancamentoCommandHandlerTests
         salvo.DataLancamento.Should().BeCloseTo(dataEsperada, TimeSpan.FromSeconds(1));
     }
 
-    // ── Publicação de evento ─────────────────────────────────────────────────
+    // ── Outbox ──────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Deve_Publicar_Evento_LancamentoRegistrado_Apos_Persistencia()
+    public async Task Deve_Enfileirar_OutboxMessage_Na_Mesma_Operacao()
     {
         await using var db = CreateDbContext();
-        var publisherMock = new Mock<IRabbitMqPublisher>();
-        var handler = CreateHandler(db, publisherMock);
+        var handler = CreateHandler(db);
 
         await handler.Handle(LancamentoCommandFaker.ValidVenda(1000));
 
-        publisherMock.Verify(p => p.PublishAsync(
-            It.IsAny<SharedKernelEvents.LancamentoRegistradoMessage>(),
-            "lancamentos.events",
-            "lancamento.criado",
-            It.IsAny<CancellationToken>()),
-            Times.Once);
+        db.OutboxMessages.Should().HaveCount(1);
     }
 
     [Fact]
-    public async Task Deve_Publicar_Evento_Com_Valor_Correto()
+    public async Task Deve_Enfileirar_OutboxMessage_Com_Exchange_E_RoutingKey_Corretos()
     {
         await using var db = CreateDbContext();
-        var publisherMock = new Mock<IRabbitMqPublisher>();
-        var handler = CreateHandler(db, publisherMock);
+        var handler = CreateHandler(db);
+
+        await handler.Handle(LancamentoCommandFaker.ValidVenda(1000));
+
+        var msg = db.OutboxMessages.Single();
+        msg.Exchange.Should().Be("lancamentos.events");
+        msg.RoutingKey.Should().Be("lancamento.criado");
+        msg.MessageType.Should().Be(nameof(SharedKernelEvents.LancamentoRegistradoMessage));
+    }
+
+    [Fact]
+    public async Task Deve_Enfileirar_Payload_Com_Valor_Correto()
+    {
+        await using var db = CreateDbContext();
+        var handler = CreateHandler(db);
         var command = LancamentoCommandFaker.ValidVenda(3333);
 
         await handler.Handle(command);
 
-        publisherMock.Verify(p => p.PublishAsync(
-            It.Is<SharedKernelEvents.LancamentoRegistradoMessage>(m => m.Valor == 3333),
-            It.IsAny<string>(),
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()),
-            Times.Once);
+        var payload = db.OutboxMessages.Single().Payload;
+        var evento = JsonSerializer.Deserialize<SharedKernelEvents.LancamentoRegistradoMessage>(payload, JsonOptions)!;
+        evento.Valor.Should().Be(3333);
     }
 
     [Fact]
-    public async Task Deve_Publicar_Evento_Com_CorrelationId_Do_Comando()
+    public async Task Deve_Enfileirar_Payload_Com_CorrelationId_Do_Comando()
     {
         await using var db = CreateDbContext();
-        var publisherMock = new Mock<IRabbitMqPublisher>();
-        var handler = CreateHandler(db, publisherMock);
+        var handler = CreateHandler(db);
         var command = LancamentoCommandFaker.ValidVenda();
 
         await handler.Handle(command);
 
-        publisherMock.Verify(p => p.PublishAsync(
-            It.Is<SharedKernelEvents.LancamentoRegistradoMessage>(m => m.CorrelationId == command.CorrelationId),
-            It.IsAny<string>(),
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()),
-            Times.Once);
+        var payload = db.OutboxMessages.Single().Payload;
+        var evento = JsonSerializer.Deserialize<SharedKernelEvents.LancamentoRegistradoMessage>(payload, JsonOptions)!;
+        evento.CorrelationId.Should().Be(command.CorrelationId);
+    }
+
+    [Fact]
+    public async Task OutboxMessage_Deve_Iniciar_Nao_Entregue()
+    {
+        await using var db = CreateDbContext();
+        var handler = CreateHandler(db);
+
+        await handler.Handle(LancamentoCommandFaker.ValidVenda());
+
+        db.OutboxMessages.Single().DeliveredAt.Should().BeNull();
     }
 
     // ── Múltiplos lançamentos ────────────────────────────────────────────────
@@ -176,5 +184,6 @@ public class RegistrarLancamentoCommandHandlerTests
         await handler.Handle(LancamentoCommandFaker.ValidVenda(2500));
 
         db.Lancamentos.Should().HaveCount(3);
+        db.OutboxMessages.Should().HaveCount(3);
     }
 }

@@ -1,10 +1,10 @@
-# 📋 Convenções de Documentação
+# Convenções de Documentação
 
 > **Premissa Fundamental:** Toda documentação do projeto **SEMPRE** fica na pasta `.docs/`, nunca espalhada pela raiz do repositório.
 
 ---
 
-## 🎯 Princípios
+## Princípios
 
 ### 1. Centralização Única
 ```
@@ -16,190 +16,135 @@
 
 ### 2. Documentação é Código
 - Versionada junto com o código
-- Revisa junto com PRs
+- Revisada junto com PRs
 - Atualizada quando a arquitetura muda
 
 ### 3. Single Source of Truth (SSOT)
 - Não duplicar informações entre arquivos
 - Usar referências cruzadas quando necessário
-- INDEX.md mantém lista centralizada
+- `ARQUITETURA.md` é o documento central e autoritativo
 
 ---
 
-## 📝 Categorias de Documentos
+## Categorias de Documentos
 
-### 🏗️ Arquitetura & Design
+### Arquitetura & Design
 Decisões arquiteturais, padrões, justificativas tecnológicas.
 
 **Exemplos:**
-- ARQUITETURA.md - Decisões principais
-- PADROES.md - Design patterns aplicados
-- ADR-001-CQRS.md - Architecture Decision Records
+- `ARQUITETURA.md` — Decisões principais, implementação atual
+- `ADR-001-CQRS.md` — Architecture Decision Records
 
 **Prefixo:** `ARQUITETURA_`, `PADROES_`, `ADR-`
 
-### 🚀 Implementação & Guias
-Passo-a-passo, tutoriais, como usar um framework/biblioteca.
+### Operações & Infraestrutura
+Guias operacionais para executar e configurar o sistema.
 
 **Exemplos:**
-- GUIA_IMPLEMENTACAO_WOLVERINE.md - Tutorial passo-a-passo
-- SETUP_DESENVOLVIMENTO.md - Configurar ambiente
-- INTEGRACAO_RABBITMQ.md - Guias específicos
+- `DOCKER-COMPOSE-EXECUTION-GUIDE.md` — Como subir a infraestrutura local
+- `VAULT-INITIALIZATION.md` — Como o Vault é inicializado
+- `KEYCLOAK_SETUP_GUIDE.md` — Como configurar o Keycloak
+- `KONG_KEYCLOAK_OIDC.md` — Integração Kong + Keycloak OIDC
+- `INIT-CONTAINERS-CLEANUP.md` — Sequência de inicialização e limpeza
 
-**Prefixo:** `GUIA_`, `SETUP_`, `INTEGRACAO_`
+**Prefixo:** `DOCKER_`, `VAULT_`, `KONG_`, `KEYCLOAK_`, `INIT_`
 
-### 📖 Referências Técnicas
-Referência rápida, cheat sheets, quick guides.
-
-**Exemplos:**
-- WOLVERINE_QUICK_REFERENCE.md - Quick reference
-- POSTGRESQL_CHEATSHEET.md - Cheat sheet
-- API_ENDPOINTS.md - Endpoints disponíveis
-
-**Prefixo:** `QUICK_`, `CHEATSHEET_`, `REFERENCE_`
-
-### 🔐 Segurança & Compliance
+### Segurança & Compliance
 Políticas de segurança, compliance, secrets management.
-
-**Exemplos:**
-- SEGURANCA_REQUISITOS.md
-- COMPLIANCE_CHECKLIST.md
-- SECRETS_POLICY.md
 
 **Prefixo:** `SEGURANCA_`, `COMPLIANCE_`, `SECRETS_`
 
-### 📊 Análise & Relatórios
-Análises técnicas, estudos comparativos, benchmarks.
-
-**Exemplos:**
-- ANALISE_PERFORMANCE.md
-- COMPARATIVO_FRAMEWORKS.md
-- BENCHMARK_CACHE.md
-
-**Prefixo:** `ANALISE_`, `COMPARATIVO_`, `BENCHMARK_`
-
 ---
 
-## 📐 Template Padrão
+## Template Padrão
 
 ```markdown
-# 📄 Título Descritivo com Emoji
+# Título Descritivo
 
 > **Objetivo:** Uma frase clara do que este documento faz.
-> **Audiência:** Quem deve ler (iniciantes/implementadores/arquitetos)
+> **Audiência:** Quem deve ler
 > **Última atualização:** Mês Ano
-
----
-
-## 📋 Índice
-
-- [Seção 1](#seção-1)
-- [Seção 2](#seção-2)
-- [Referências](#referências)
 
 ---
 
 ## Seção 1
 
-Conteúdo com exemplos práticos.
-
-```csharp
-// Exemplo de código
-var exemplo = new Classe();
-```
-
-## Seção 2
-
-Mais conteúdo.
+Conteúdo.
 
 ---
 
-## Referências
-
-- 🔗 [Link 1](url)
-- 🔗 [Link 2](url)
-
----
-
-**Versão:** 1.0  
-**Status:** ✅ Ativo | ⚠️ Em Revisão | 🔄 Planejado
+**Versão:** 1.0
+**Status:** Ativo
 ```
 
 ---
 
-## ✅ Checklist: Antes de Commitar
+## Checklist: Antes de Commitar
 
 - [ ] **Localização:** Arquivo em `.docs/`?
-- [ ] **Nomenclatura:** Segue convenção (PascalCase)?
+- [ ] **Nomenclatura:** Segue convenção (SCREAMING_SNAKE_CASE.md)?
 - [ ] **Conteúdo:**
-  - [ ] Título com emoji
   - [ ] Objetivo claro
-  - [ ] Índice de seções
   - [ ] Exemplos práticos
-  - [ ] Links internos (.docs/)
+  - [ ] Links internos corretos (todos os arquivos referenciados existem)
   - [ ] Data de atualização
 - [ ] **Qualidade:**
   - [ ] Sem typos/erros
   - [ ] Formatação Markdown consistente
   - [ ] Código compilaria/rodaria se necessário
-- [ ] **Manutenção:**
-  - [ ] INDEX.md atualizado?
-  - [ ] Referências cruzadas corretas?
-  - [ ] Sem conteúdo duplicado?
+  - [ ] Credenciais e nomes batem com `docker-compose.yml`
 
 ---
 
-## 🚫 Não Faça
+## Não Faça
 
-```markdown
+```
 ❌ Não crie documentação na raiz do repositório
 ❌ Não duplique conteúdo em múltiplos arquivos
 ❌ Não use documentação desatualizada como referência
-❌ Não ignore links quebrados
-❌ Não misture idiomas (português/inglês)
+❌ Não use credenciais ou nomes de containers que diferem do docker-compose.yml
 ✅ Mantenha tudo em .docs/
 ✅ Use referências cruzadas
-✅ Atualize INDEX.md
-✅ Revise links antes de commitar
+✅ Verifique credenciais contra o docker-compose.yml antes de commitar
 ```
 
 ---
 
-## 🔗 Exemplos de Referências Cruzadas
+## Referências Cruzadas
 
 **Dentro de `.docs/`:**
 ```markdown
-Veja [ARQUITETURA.md](ARQUITETURA.md#seção) para mais detalhes.
+Veja [ARQUITETURA.md](ARQUITETURA.md) para mais detalhes.
 ```
 
 **Para fora de `.docs/`:**
 ```markdown
-Veja [README.md](../README.md) para instruções de execução.
-Veja [DOCKER-COMPOSE.md](../DOCKER-COMPOSE.md) para setup.
+Veja [docker-compose.yml](../docker-compose.yml) para configuração dos serviços.
 ```
 
 ---
 
-## 📚 Estrutura Final Esperada
+## Estrutura Atual de `.docs/`
 
 ```
 .docs/
-├── INDEX.md                              (← Você está aqui)
-├── CONVENÇÕES.md                         (Guia de convenções)
-├── ARQUITETURA.md                        (Decisões principais)
-├── GUIA_IMPLEMENTACAO_WOLVERINE.md       (Tutorial)
-├── WOLVERINE_QUICK_REFERENCE.md          (Cheat sheet)
-└── desafio-arquiteto-software.pdf        (Referência)
+├── ARQUITETURA.md                    ← Documento central (v2.0)
+├── CONVENCOES.md                     ← Este arquivo
+├── DOCKER-COMPOSE-EXECUTION-GUIDE.md ← Como subir a infra local
+├── INIT-CONTAINERS-CLEANUP.md        ← Sequência de boot e limpeza
+├── KEYCLOAK_SETUP_GUIDE.md           ← Configuração do Keycloak
+├── KONG_KEYCLOAK_OIDC.md             ← Integração Kong + OIDC
+├── KONG_KEYCLOAK_TESTS.md            ← Testes de integração Kong/Keycloak
+├── VAULT-INITIALIZATION.md           ← Inicialização automática do Vault
+└── desafio-arquiteto-software.pdf    ← Especificação original do desafio
 ```
 
 ---
 
 **Premissa Fundamental:** Documentação centralizada = documentação mantida = documentação útil.
 
-Toda nova documentação SEMPRE em `.docs/`
-
 ---
 
-**Versão:** 1.0  
-**Status:** ✅ Ativo  
+**Versão:** 1.1
+**Status:** Ativo
 **Última atualização:** Maio 2026

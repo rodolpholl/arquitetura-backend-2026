@@ -15,6 +15,7 @@ public class LancamentosDbContext : DbContext
     }
 
     public DbSet<Lancamento> Lancamentos { get; set; } = null!;
+    public DbSet<OutboxMessage> OutboxMessages { get; set; } = null!;
 
 
     // <summary>
