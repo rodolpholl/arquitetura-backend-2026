@@ -166,6 +166,9 @@ if (app.Environment.IsDevelopment())
 // Endpoints de todos os módulos (descobertos automaticamente pelo Wolverine)
 app.MapAllModules();
 
+// Prometheus /metrics
+app.MapFinControlMetricsEndpoint();
+
 // ==================== RUN ====================
 Console.WriteLine($"\n🚀 Aplicação iniciando em modo: {(app.Environment.IsDevelopment() ? "DESENVOLVIMENTO" : "PRODUÇÃO")}\n");
 app.Run();

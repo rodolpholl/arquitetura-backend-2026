@@ -127,6 +127,9 @@ if (app.Environment.IsDevelopment())
 
 app.MapAllModules();
 
+// Prometheus /metrics
+app.MapFinControlMetricsEndpoint();
+
 // ==================== RUN ====================
 Console.WriteLine($"\n🚀 Consolidados iniciando em modo: {(app.Environment.IsDevelopment() ? "DESENVOLVIMENTO" : "PRODUÇÃO")}\n");
 app.Run();

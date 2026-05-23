@@ -230,12 +230,11 @@ services:
 
   # Grafana - Dashboards de Visualização
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.1.0
     container_name: fincontrol-grafana
     environment:
       GF_SECURITY_ADMIN_PASSWORD: fincontrol_grafana_password_123
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_INSTALL_PLUGINS: "grafana-piechart-panel"
     ports:
       - "3000:3000"
     volumes:
