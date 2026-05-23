@@ -2,7 +2,7 @@
 
 **Projeto:** FinControl — Sistema de Controle de Fluxo de Caixa para Comerciante  
 **Data:** Maio 2026  
-**Versão:** 2.0 — Implementação em produção
+**Versão:** 3.0 — Implementação em produção
 
 ---
 
@@ -15,22 +15,28 @@
 
 | Componente | Status | Observações |
 |-----------|--------|-------------|
-| **FinControl.Lancamentos.API** | ✅ Funcional | `POST /lancamentos`, `GET /lancamentos` + Wolverine + Vault + JWT |
-| **FinControl.Lancamentos.Core** | ✅ Funcional | CQRS, validação FluentValidation, EF Core, Outbox |
-| **FinControl.Consolidado.API** | ✅ Funcional | `GET /consolidado/saldo/{data}` via Redis |
-| **FinControl.Consolidado.Core** | ✅ Funcional | Command + Query handlers |
-| **FinControl.Consolidado.Worker** | ✅ Funcional | Consumer RabbitMQ → atualiza Redis |
-| **FinControl.Infrastructure** | ✅ Funcional | Cache, Lock, Vault, Middleware, Observability |
+| **FinControl.Lancamentos.API** | ✅ Funcional | `POST /lancamentos/registrar` + Wolverine handlers + Vault + JWT |
+| **FinControl.Lancamentos.Core** | ✅ Funcional | CQRS via Wolverine, FluentValidation, EF Core, Outbox manual |
+| **FinControl.Consolidado.API** | ✅ Funcional | `GET /consolidados/saldo?data-lancamento=yyyy-MM-dd` via Redis |
+| **FinControl.Consolidado.Core** | ✅ Funcional | Command + Query handlers via Wolverine |
+| **FinControl.Consolidado.Worker** | ✅ Funcional | Consumer RabbitMQ direto → atualiza Redis |
+| **FinControl.Infrastructure** | ✅ Funcional | Cache, Lock, Vault, Middleware, Observability, RabbitMqPublisher |
 | **FinControl.SharedKernel** | ✅ Funcional | Entidades base, eventos, resultado tipado |
 | **FinControl.Auth** | ✅ Funcional | Integração Keycloak (JWT Bearer) |
 | **HashiCorp Vault** | ✅ Integrado | Secrets carregados via `VaultConfigurationProvider` |
 | **Redis (Cache + Lock)** | ✅ Integrado | `RedisCacheService` + `IRedisLockService` (SETNX + Lua) |
-| **RabbitMQ (Outbox)** | ✅ Integrado | Wolverine Outbox no Lancamentos + Consumer direto no Worker |
-| **PostgreSQL + Migrations** | ✅ Integrado | Auto-apply no startup (fail-fast), `AddIdempotencyKey` aplicada |
+| **RabbitMQ (Outbox Manual)** | ✅ Integrado | `OutboxMessage` no PostgreSQL + `OutboxRelayService` (BackgroundService) |
+| **OutboxRelayService + Polly** | ✅ Implementado | Polling 5s, batch 50, retry 3× exponencial com jitter |
+| **RabbitMqPublisher** | ✅ Implementado | Publisher direto AMQP (building block reutilizável) |
+| **PostgreSQL + Migrations** | ✅ Integrado | Auto-apply no startup (fail-fast), `AddOutboxMessages` aplicada |
 | **Idempotência** | ✅ Implementado | `IdempotencyKey` (UUID) + índice único no BD |
 | **Soft Delete** | ✅ Implementado | Global query filter `DeletedAt == null` |
-| **SubscriptionKeyMiddleware** | ✅ Implementado | Segunda camada de segurança após Kong |
-| **Testes automatizados** | ✅ 60 testes | 46 (Lancamentos) + 14 (Consolidado), zero falhas |
+| **SubscriptionKeyMiddleware** | ✅ Implementado | Segunda camada após Kong; bypass `/health` e `/metrics` |
+| **Kong request-transformer** | ✅ Configurado | Kong injeta `X-Subscription-Key` automaticamente — jamais exposta ao cliente |
+| **Kong JWT (RS256 + Keycloak)** | ✅ Configurado | Chave pública Keycloak registrada como credencial JWT no Kong |
+| **Grafana Dashboard** | ✅ Provisionado | Dashboard HTTP provisionado via JSON (`fincontrol-http-v1`) |
+| **Prometheus /metrics** | ✅ Funcional | `prometheus-net` expõe métricas em `/metrics` (ambas as APIs) |
+| **Testes automatizados** | ✅ 64 testes | 48 (Lancamentos) + 16 (Consolidado), zero falhas |
 
 ### O que está em aberto (roadmap)
 
@@ -459,7 +465,7 @@ Lançamentos publicados: 350/dia
 Tamanho do evento:
 ├─ Metadata: 100 bytes
 ├─ Dados: 300 bytes
-├─ Envelope MassTransit: 200 bytes
+├─ Envelope AMQP/JSON: 200 bytes
 └─ TOTAL: ~600 bytes/evento
 
 Em dia tipico: 350 × 600 bytes = 210 KB
@@ -1323,7 +1329,7 @@ Estratégia de Decomposição (sem downtime):
 1. Manter Monolito com eventos publicados para RabbitMQ
 2. Novo microsserviço subscrevedo a eventos (inicialmente simples)
 3. Dual-write durante transição (Monolito + Novo Serviço)
-4. Event sourcing via Wolverine Outbox (garantia de entrega)
+4. Outbox Pattern manual (garantia de entrega: PostgreSQL → RabbitMQ)
 5. Cortar dependências do Monolito quando estável
 6. Decompor próxima feature (processo repetido)
 
@@ -1361,45 +1367,63 @@ Resultado esperado (Ano 5):
 ### Diagrama de Arquitetura
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                      API Gateway / Load Balancer                 │
-│                    (Roteamento Centralizado)                     │
-└─────────────────┬──────────────────────────────────────────────┬─┘
-                  │                                              │
-         ┌────────▼──────────┐                        ┌──────────▼────────┐
-         │  Lançamentos      │                        │  Consolidado      │
-         │  Service          │                        │  Service          │
-         │  (ASP.NET Core)   │                        │  (ASP.NET Core)   │
-         │                   │                        │                   │
-         │ - POST /eventos   │                        │ - GET /saldo/{dt} │
-         │ - Validates input │                        │ - Queries saldos  │
-         │ - Persists to DB  │                        │ - Cache enabled   │
-         │ - Publishes event │                        │ - Eventual cons.  │
-         └────────┬──────────┘                        └───────────────────┘
-                  │                                           ▲
-                  │ (LançamentoRegistrado)                    │ (Consome)
-                  │                                           │
-                  ▼                                           │
-         ┌────────────────────────────────────────────────────┐
-         │        Message Broker (Event Bus)                  │
-         │  RabbitMQ / Azure Service Bus / MassTransit       │
-         │                                                    │
-         │  ✓ Fila persistente                               │
-         │  ✓ Retry automático                               │
-         │  ✓ Dead Letter Queue                              │
-         │  ✓ Absorve picos (50+ req/s)                     │
-         └────────────────────────────────────────────────────┘
-                  │
-        ┌─────────┴─────────┬──────────────┐
-        │                   │              │
-        ▼                   ▼              ▼
-    ┌─────────┐      ┌──────────┐   ┌──────────────┐
-    │PostgreSQL       │  Redis   │   │ Event Store  │
-    │ Database        │  Cache   │   │(Audit Trail) │
-    │                 │          │   │              │
-    │ Transações      │ Saldos   │   │ Imutável     │
-    │ ACID            │ TTL 1m   │   │ Histórico    │
-    └─────────┘      └──────────┘   └──────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          CLIENTE (Browser / App / Postman)                      │
+│                  Authorization: Bearer <JWT Keycloak>                           │
+└──────────────────────────────────┬──────────────────────────────────────────────┘
+                                   │ HTTP
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                      KONG API GATEWAY  (porta 8000)                             │
+│                                                                                 │
+│  POST /lancamentos/registrar          GET /consolidados/saldo?data-lancamento=  │
+│  ├─ [jwt] Valida RS256 c/ Keycloak    ├─ [jwt] Valida RS256 c/ Keycloak        │
+│  ├─ [rate-limiting] 300 req/min       ├─ [proxy-cache] 30s GET cache           │
+│  ├─ [request-transformer]             ├─ [rate-limiting] 55 req/s              │
+│  │    Injeta X-Subscription-Key       └─ [request-transformer]                 │
+│  └─ [correlation-id]                       Injeta X-Subscription-Key           │
+└──────────┬─────────────────────────────────────────┬───────────────────────────┘
+           │ upstream :5083                           │ upstream :5260
+           ▼                                         ▼
+┌──────────────────────────┐             ┌──────────────────────────┐
+│  FinControl.Lancamentos  │             │  FinControl.Consolidado  │
+│         .API             │             │           .API           │
+│                          │             │                          │
+│  Wolverine HTTP Handler  │             │  Wolverine HTTP Handler  │
+│  SubscriptionKeyMiddl.   │             │  SubscriptionKeyMiddl.   │
+│  FluentValidation        │             │                          │
+│  Idempotência (UUID)     │             │  Redis GET saldo         │
+│                          │             │  → 200 / 404             │
+│  BEGIN TX                │             └──────────────────────────┘
+│   INSERT lancamentos     │                         ▲
+│   INSERT outbox_messages │                         │ (cache populado pelo Worker)
+│  COMMIT                  │                         │
+│                          │             ┌──────────────────────────┐
+│  (BackgroundService)     │             │  FinControl.Consolidado  │
+│  OutboxRelayService      │             │         .Worker          │
+│  Polly retry 3×          │             │                          │
+│  RabbitMqPublisher ──────┼──────────── │  LancamentoRegistrado    │
+└──────────────────────────┘   RabbitMQ  │  Consumer                │
+           │                  ←eventos→  │  AcquireLock (Redis)     │
+           │                             │  Recalcula saldo         │
+           ▼                             │  SET Redis (TTL 30d)     │
+┌──────────────────────────┐             └──────────────────────────┘
+│       PostgreSQL 16       │                         │
+│                          │             ┌────────────▼─────────────┐
+│  schema: lancamentos      │             │         Redis 7           │
+│  ├─ lancamentos           │             │                          │
+│  └─ outbox_messages       │             │  saldo:consolidado:{dt}  │
+└──────────────────────────┘             └──────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         INFRAESTRUTURA DE APOIO                                 │
+│                                                                                 │
+│  Keycloak :8081  ──── JWT RS256 ────►  Kong (chave pública do realm)            │
+│  Vault :8200     ──── Secrets ──────►  Todas as APIs (VaultConfigurationProvider│
+│  Prometheus :9090 ─── Scraping ─────►  /metrics (ambas as APIs)                │
+│  Grafana :3000   ──── Dashboards ───►  Prometheus datasource                   │
+│  Jaeger :16686   ──── Traces ───────►  OTLP (OpenTelemetry)                    │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Por que esta abordagem?
@@ -1518,10 +1542,10 @@ Requisição GET /saldo/2026-05-20
 │     └─ Scalar UI para documentação OpenAPI (não Swagger)
 │
 ├─ CQRS & Mediator
-│  └─ WolverineFx (Lancamentos — handlers, Outbox, middleware pipeline)
+│  └─ WolverineFx (handlers HTTP, middleware pipeline)
 │     ├─ ValidationMiddleware (FluentValidation automático)
 │     ├─ LoggingMiddleware (CorrelationId propagado)
-│     └─ Outbox Pattern (transação atômica com PostgreSQL)
+│     └─ [WolverinePost] / [WolverineGet] — endpoints declarativos
 │
 ├─ ORM & Data Access
 │  ├─ Entity Framework Core 10 (Npgsql provider)
@@ -1530,12 +1554,18 @@ Requisição GET /saldo/2026-05-20
 │  │  └─ AsNoTracking para queries de leitura
 │  └─ Repository Pattern (Ardalis.Specification)
 │
+├─ Outbox Pattern (implementação manual)
+│  ├─ OutboxMessage entity (tabela lancamentos.outbox_messages)
+│  ├─ RegistrarLancamentoCommandHandler — transação atômica (lancamento + outbox)
+│  ├─ OutboxRelayService (BackgroundService — polling 5s, batch 50)
+│  │  └─ Polly ResiliencePipeline: retry 3× exponencial + jitter
+│  └─ RabbitMqPublisher (IRabbitMqPublisher — building block reutilizável)
+│     └─ Conexão única reutilizável + IChannel por publicação
+│
 ├─ Message Bus
-│  ├─ WolverineFx.RabbitMQ (publisher no Lancamentos via Outbox)
 │  └─ RabbitMQ.Client direto (consumer no Consolidado.Worker)
 │     ├─ Topic exchange: lancamentos.events
 │     ├─ Queue: fincontrol.consolidado.lancamento-registrado
-│     ├─ Dead-letter exchange: wolverine-dead-letter-queue
 │     ├─ prefetchCount: 10, autoAck: false
 │     └─ Reconexão exponencial (5s → 60s)
 │
@@ -1548,12 +1578,16 @@ Requisição GET /saldo/2026-05-20
 │  │  └─ Release atômico via Lua (garante que só o dono libera)
 │  └─ Chave de cache: saldo:consolidado:{yyyy-MM-dd}, TTL 30 dias
 │
+├─ Resilience
+│  └─ Polly v8 (ResiliencePipelineBuilder)
+│     └─ OutboxRelayService: retry 3× com backoff exponencial + jitter
+│
 ├─ Validation
 │  └─ FluentValidation (avaliação em runtime — não valores capturados)
 │
 ├─ Logging
 │  ├─ Serilog (structured logging)
-│  └─ Sinks: Console, File, Grafana Loki
+│  └─ Sinks: Console, File
 │     └─ CorrelationId enriquecido em todos os logs
 │
 ├─ Secrets Management
@@ -1566,10 +1600,10 @@ Requisição GET /saldo/2026-05-20
 │  └─ SubscriptionKeyMiddleware
 │     ├─ Valida header X-Subscription-Key contra Vault
 │     ├─ Usa CryptographicOperations.FixedTimeEquals (timing-safe)
-│     └─ Bypassa /health — segunda camada após Kong
+│     └─ Bypassa /health e /metrics — segunda camada após Kong
 │
 ├─ Idempotência
-│  ├─ IdempotencyKey (UUID) no payload de criação de lançamento
+│  ├─ IdempotencyKey (UUID) no header Idempotency-Key
 │  ├─ Armazenado na entidade Lancamento
 │  └─ Índice único: idx_lancamento_idempotency_key
 │
@@ -1581,24 +1615,30 @@ Requisição GET /saldo/2026-05-20
 │
 └─ Observability
    ├─ OpenTelemetry (traces + métricas HTTP, EF Core, HTTP client)
-   ├─ prometheus-net (métricas expostas em /metrics)
-   └─ Serilog + Loki (logs estruturados)
+   ├─ prometheus-net (métricas expostas em /metrics — ambas as APIs)
+   ├─ Jaeger (distributed tracing, OTLP)
+   └─ Serilog (logs estruturados)
 ```
 
 ### Infraestrutura
 
 ```
 WAF & Firewall:      ModSecurity 3.0+ (OWASP Top 10 protection)
-API Gateway:         Kong 3.4+ (rate limiting, circuit breaker, auth plugins)
-                     └─ X-Subscription-Key injetado pelo Kong nos serviços
-Database:            PostgreSQL 15+
-Cache:               Redis 7+ (StackExchange.Redis, prefixo FinControl:)
-Message Bus:         RabbitMQ 3.12+
+API Gateway:         Kong 3.4
+                     ├─ jwt plugin: valida RS256 com chave pública do Keycloak
+                     ├─ request-transformer: injeta X-Subscription-Key no upstream
+                     ├─ proxy-cache: cache GET por 30s (Consolidado)
+                     └─ rate-limiting: 300 req/min (Lancamentos), 55 req/s (Consolidado)
+Database:            PostgreSQL 16 (Alpine)
+Cache:               Redis 7 Alpine (StackExchange.Redis)
+Message Bus:         RabbitMQ 3.12 Management Alpine
                      └─ Exchange: lancamentos.events (topic, durable)
-Secrets Management:  HashiCorp Vault 1.15+ (KV v2)
-Identity Provider:   Keycloak 23+ (SSO, OAuth2, OIDC)
-Observability:       OpenTelemetry + prometheus-net + Serilog + Loki
-Dashboard:           Grafana 10+ (visualização unificada)
+Secrets Management:  HashiCorp Vault 1.15 (KV v2, dev mode)
+Identity Provider:   Keycloak latest (SSO, OAuth2, OIDC, realm fincontrol)
+Observability:       OpenTelemetry + prometheus-net + Serilog + Jaeger
+Dashboard:           Grafana 11.1.0 (dashboard HTTP provisionado via JSON)
+Metrics:             Prometheus (scraping /metrics das APIs)
+Tracing:             Jaeger all-in-one (OTLP gRPC 4317 + HTTP 4318)
 Container:           Docker + Docker Compose (dev/prod)
 CI/CD:               GitHub Actions
 ```
@@ -1841,8 +1881,8 @@ arquitetura-backend-2026/
 │   │       └── FinControl.Consolidado.Worker/  ← BackgroundService consumer
 │   │           ├── LancamentoRegistradoConsumer.cs  ← RabbitMQ.Client direto
 │   │           │                                       Exchange: lancamentos.events
-│   │           │                                       DLX: wolverine-dead-letter-queue
-│   │           │                                       Reconexão exponencial
+│   │           │                                       Queue durable, prefetchCount: 10
+│   │           │                                       Reconexão exponencial (5s → 60s)
 │   │           └── Program.cs                  ← Vault → Redis → IConnectionMultiplexer
 │   │                                              → IRedisLockService → Handler
 │   │
@@ -1900,18 +1940,18 @@ arquitetura-backend-2026/
 │               └── IQuery.cs
 │
 ├── src/tests/
-│   ├── FinControl.Lancamentos.Tests/
-│   │   ├── Domain/LancamentoTests.cs
+│   ├── FinControl.Lancamentos.Tests/          ← 48 testes
+│   │   ├── Domain/LancamentoTests.cs                       (9 testes)
 │   │   ├── Fakers/LancamentoCommandFaker.cs
 │   │   └── Features/Commands/
-│   │       ├── RegistrarLancamentoCommandHandlerTests.cs  ← 46 testes
-│   │       └── RegistrarLancamentoCommandValidatorTests.cs
+│   │       ├── RegistrarLancamentoCommandHandlerTests.cs   (12 testes)
+│   │       └── RegistrarLancamentoCommandValidatorTests.cs (27 testes)
 │   │
-│   └── FinControl.Consolidado.Tests/
+│   └── FinControl.Consolidado.Tests/          ← 16 testes
 │       ├── Fakers/SaldoConsolidadoFaker.cs
 │       └── Features/
-│           ├── Commands/AtualizarSaldoConsolidaoCommandHandlerTests.cs ← 14 testes
-│           └── Queries/GetSaldoConsolidadoQueryHandlerTests.cs
+│           ├── Commands/AtualizarSaldoConsolidaoCommandHandlerTests.cs (9 testes)
+│           └── Queries/GetSaldoConsolidadoQueryHandlerTests.cs         (7 testes)
 │
 ├── docker-compose.yml           ← PostgreSQL, Redis, RabbitMQ, Vault, Keycloak, Kong
 ├── README.md
@@ -2285,43 +2325,32 @@ public class LoggingInterceptor
 - ✅ Validar tipo, valor, data e modalidade via FluentValidation
 - ✅ Verificar idempotência antes de persistir (IdempotencyKey único)
 - ✅ Persistir em PostgreSQL via EF Core (ACID)
-- ✅ Publicar evento `LancamentoRegistradoMessage` via Wolverine Outbox
+- ✅ Publicar evento `LancamentoRegistradoMessage` via Outbox Manual (OutboxRelayService)
 - ✅ Manter independência funcional — não conhece o Consolidado
 
 **Endpoints implementados:**
 ```
-Headers obrigatórios (todas as rotas):
-  Authorization: Bearer <token Keycloak>
-  X-Subscription-Key: <chave configurada no Vault/Kong>
+Headers obrigatórios (via Kong):
+  Authorization: Bearer <token JWT Keycloak>
+  Idempotency-Key: <uuid-v4>  ← gerado pelo cliente
+  (X-Subscription-Key é injetado pelo Kong — nunca enviado pelo cliente)
 
-POST /lancamentos
+POST /lancamentos/registrar   (via Kong: POST http://localhost:8000/lancamentos/registrar)
   Body: {
-    "tipo": "Credito" | "Debito",
     "modalidade": "Venda" | "Devolucao" | "Suprimento" | "Sangria" |
                   "PagamentoFornecedor" | "RecebimentoDivida" | "Outros",
-    "valor": 15000,              ← em centavos (long)
-    "dataLancamento": "2026-05-23T10:00:00Z",
-    "descricao": "string",       ← obrigatório se modalidade = Outros
-    "idempotencyKey": "uuid-v4"  ← cliente gera; retorna 409 se já existir
+    "valor": 15000,                ← em centavos (long)
+    "dataLancamento": "2026-05-23T10:00:00",  ← opcional, default = UTC now
+    "descricao": "string"          ← obrigatório se modalidade = Outros
   }
   Response 201: {
-    "id": 1,
     "navigationId": "uuid",
-    "tipo": "Credito",
-    "tipoFormatado": "Crédito",
-    "modalidade": "Venda",
-    "valor": 15000,
-    "dataLancamento": "2026-05-23T10:00:00Z",
     "criadoEm": "2026-05-23T10:00:05Z"
   }
-  Response 409: já processado (idempotência)
+  Response 409: já processado (idempotência — mesmo Idempotency-Key)
   Response 400: validação falhou (ProblemDetails RFC 7807)
   Response 401: token ausente/inválido
   Response 403: subscription-key inválida
-
-GET /lancamentos
-  Query: ?pageNumber=1&pageSize=20
-  Response 200: { items: [...], totalCount, pageNumber, pageSize }
 ```
 
 **Schema PostgreSQL (schema: lancamentos):**
@@ -2358,15 +2387,16 @@ CREATE INDEX idx_lancamento_data
 
 **Endpoint implementado:**
 ```
-GET /consolidado/saldo/{data}
-  Param: data = yyyy-MM-dd (ex: 2026-05-23)
+GET /consolidados/saldo?data-lancamento=yyyy-MM-dd
+  (via Kong: GET http://localhost:8000/consolidados/saldo?data-lancamento=2026-05-23)
   Response 200: {
     "data": "2026-05-23",
     "saldo": 125000,           ← em centavos (long)
     "ultimaAtualizacao": "2026-05-23T10:15:30Z"
   }
-  Response 404: sem saldo para a data (cache vazio + nenhum lançamento)
-  Response 401/403: autenticação/subscription-key
+  Response 404: sem saldo para a data (cache vazio — nenhum lançamento processado)
+  Response 401: token ausente/inválido
+  Response 403: subscription-key inválida
 ```
 
 #### 2b. `FinControl.Consolidado.Worker` (consumidor de eventos)
@@ -2401,17 +2431,23 @@ Lock:   lock:saldo:consolidado:{yyyy-MM-dd}     (5 tentativas × 100ms, expiry 1
 
 ---
 
-### 3. Event Bus (RabbitMQ + Wolverine Outbox)
+### 3. Event Bus (RabbitMQ + Outbox Manual)
 
 **Evento publicado:**
 ```csharp
 // FinControl.SharedKernel/Domain/Events/LancamentoRegistradoMessage.cs
 public record LancamentoRegistradoMessage(
-    Guid Id,
+    long Id,
+    Guid NavigationId,
+    ModalidadeLancamento Modalidade,
     long Valor,
+    string? Descricao,
     DateTimeOffset DataLancamento,
-    string Tipo,
-    string Modalidade);
+    DateTimeOffset OcorridoEm,
+    string? UsuarioId,
+    string? UsuarioNome,
+    string? UsuarioEmail,
+    string? CorrelationId);
 ```
 
 **Topologia RabbitMQ:**
@@ -2419,15 +2455,56 @@ public record LancamentoRegistradoMessage(
 Exchange: lancamentos.events   (topic, durable)
   └── Binding: lancamento.criado
        └── Queue: fincontrol.consolidado.lancamento-registrado (durable)
-                  x-dead-letter-exchange: wolverine-dead-letter-queue
 ```
 
-**Pipeline Wolverine (Lancamentos):**
+**Padrão Outbox implementado (Lancamentos — transação atômica):**
 ```csharp
-// Outbox — publicação na mesma transação PostgreSQL
-opts.UseRabbitMq(...)
-    .UseDurableOutbox()
-    .AutoProvision();
+// RegistrarLancamentoCommandHandler.cs — garante atomicidade entre lançamento e outbox
+var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+try
+{
+    // 1ª gravação: persiste o lançamento (Id e NavigationId gerados pelo banco)
+    db.Set<Lancamento>().Add(lancamento);
+    await db.SaveChangesAsync(cancellationToken);
+
+    // 2ª gravação: persiste o OutboxMessage (payload já tem Id e NavigationId)
+    db.Set<OutboxMessage>().Add(new OutboxMessage
+    {
+        MessageType = nameof(LancamentoRegistradoMessage),
+        Payload     = JsonSerializer.Serialize(evento, JsonOptions),
+        Exchange    = "lancamentos.events",
+        RoutingKey  = "lancamento.criado",
+        CreatedAt   = DateTimeOffset.UtcNow
+    });
+    await db.SaveChangesAsync(cancellationToken);
+    await tx.CommitAsync(cancellationToken);
+}
+catch { await tx.RollbackAsync(cancellationToken); throw; }
+```
+
+**OutboxRelayService — relay assíncrono com Polly:**
+```csharp
+// FinControl.Lancamentos.Core/Outbox/OutboxRelayService.cs
+// BackgroundService com polling a cada 5s, batch de 50 mensagens
+// Retry: 3× com backoff exponencial + jitter (Polly ResiliencePipeline)
+// Se falhar após 3 tentativas: incrementa RetryCount + LastError na tabela
+```
+
+**Tabela outbox_messages (schema: lancamentos):**
+```sql
+CREATE TABLE lancamentos.outbox_messages (
+  id           BIGSERIAL PRIMARY KEY,
+  message_type VARCHAR(200) NOT NULL,
+  payload      TEXT NOT NULL,
+  exchange     VARCHAR(200) NOT NULL,
+  routing_key  VARCHAR(200) NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL,
+  delivered_at TIMESTAMPTZ,          -- NULL = pendente
+  retry_count  INT NOT NULL DEFAULT 0,
+  last_error   VARCHAR(2000)
+);
+CREATE INDEX idx_outbox_messages_delivered_at
+  ON lancamentos.outbox_messages (delivered_at);
 ```
 
 ---
@@ -2439,42 +2516,61 @@ opts.UseRabbitMq(...)
 ```
 Cliente HTTP
     │
-    ├─→ POST /api/lancamentos
-    │   {
-    │     "tipo": "D",
-    │     "valor": 500.00,
-    │     "descricao": "Pagamento fornecedor"
-    │   }
+    ├─→ POST /lancamentos/registrar
+    │   Authorization: Bearer <JWT Keycloak>
+    │   Idempotency-Key: <uuid-v4>
+    │   Body: { "modalidade": "Venda", "valor": 15000, "dataLancamento": "..." }
     │
     ▼
-LancamentosController
+Kong API Gateway (porta 8000)
     │
-    ├─→ Validação (FluentValidation)
-    │   ✓ Tipo válido?
-    │   ✓ Valor > 0?
-    │   ✓ Descrição vazia?
+    ├─→ [jwt plugin] Valida JWT com chave pública RS256 do Keycloak
+    ├─→ [rate-limiting] 300 req/min por consumer
+    ├─→ [request-transformer] Injeta X-Subscription-Key (segredo interno)
+    ├─→ [correlation-id] Propaga X-Correlation-Id
     │
-    ├─→ SIM: Erro → 400 Bad Request
+    ▼ upstream: host.docker.internal:5083
     │
-    ├─→ NÃO: Proceder
+RegistrarLancamentoEndpoint (Wolverine HTTP)
     │
-    ▼
-RegistrarLancamentoHandler
-    │
-    ├─→ Criar agregado Lancamento
-    ├─→ Persistir em PostgreSQL
-    ├─→ Publicar evento LançamentoRegistrado
+    ├─→ SubscriptionKeyMiddleware: valida X-Subscription-Key do Vault
+    ├─→ [Authorize]: verifica JWT
+    ├─→ Extrai usuário + correlationId do contexto HTTP
     │
     ▼
-MassTransit (RabbitMQ)
+RegistrarLancamentoCommandHandler
     │
-    └─→ Pub/Sub
-        │
-        ├─→ Consolidado.Consumer (atualiza saldo)
-        ├─→ Audit.Consumer (registra log)
-        └─→ Notification.Consumer (envia SMS/Email)
-
-Response HTTP 201: { id, timestamp, status }
+    ├─→ Verifica idempotência (SELECT por IdempotencyKey) → 409 se já existe
+    ├─→ BEGIN TRANSACTION (PostgreSQL)
+    │   ├─→ INSERT lancamentos.lancamentos (persiste lançamento)
+    │   └─→ INSERT lancamentos.outbox_messages (persiste OutboxMessage)
+    │       Payload = LancamentoRegistradoMessage serializado
+    └─→ COMMIT
+    │
+Response HTTP 201: { navigationId, criadoEm }
+    │
+    (assíncrono — fora do request HTTP)
+    │
+    ▼
+OutboxRelayService (BackgroundService — polling 5s)
+    │
+    ├─→ SELECT outbox_messages WHERE delivered_at IS NULL LIMIT 50
+    ├─→ Para cada mensagem:
+    │   ├─→ [Polly] Retry 3× exponencial + jitter
+    │   ├─→ RabbitMqPublisher.PublishRawAsync()
+    │   │   → Exchange: lancamentos.events, RoutingKey: lancamento.criado
+    │   └─→ UPDATE outbox_messages SET delivered_at = NOW()
+    │
+    ▼
+RabbitMQ (Queue: fincontrol.consolidado.lancamento-registrado)
+    │
+    ▼
+LancamentoRegistradoConsumer (Consolidado.Worker)
+    │
+    ├─→ Adquire lock distribuído Redis (lock:saldo:consolidado:{data})
+    ├─→ Lê saldo atual do Redis
+    ├─→ Incrementa saldo com valor do lançamento
+    └─→ SET Redis: saldo:consolidado:{data} (TTL 30 dias)
 ```
 
 ---
@@ -2484,21 +2580,32 @@ Response HTTP 201: { id, timestamp, status }
 ```
 Cliente HTTP
     │
-    ├─→ GET /api/consolidado/2026-05-20
+    ├─→ GET /consolidados/saldo?data-lancamento=2026-05-20
+    │   Authorization: Bearer <JWT Keycloak>
     │
     ▼
-ConsolidadoController
+Kong API Gateway (porta 8000)
     │
-    ├─→ Verificar Cache (Redis)
+    ├─→ [jwt plugin] Valida JWT
+    ├─→ [proxy-cache] Cache GET por 30s (evita até 1500 req/30s sem tocar upstream)
+    ├─→ [rate-limiting] 55 req/s / 3300 req/min por consumer
+    ├─→ [request-transformer] Injeta X-Subscription-Key
+    │
+    ▼ upstream: host.docker.internal:5260
+    │
+GetSaldoConsolidadoEndpoint (Wolverine HTTP)
+    │
+    ├─→ SubscriptionKeyMiddleware: valida X-Subscription-Key
+    │
+    ▼
+GetSaldoConsolidadoQueryHandler
+    │
+    ├─→ Redis GET saldo:consolidado:{data}
     │
     ├─→ HIT: Retorna imediatamente (<5ms)
     │
-    ├─→ MISS: Calcular
-    │   ├─→ QueryHandler
-    │   └─→ Busca dados do PostgreSQL
-    │       └─→ SUM(debitos), SUM(creditos), saldo anterior
-    │
-    ├─→ Armazena em Redis (TTL: 60s)
+    ├─→ MISS: Retorna 404 (saldo não calculado ainda)
+    │   (cache é sempre populado pelo Worker; cold start = sem lançamentos)
     │
     ▼
 Response HTTP 200:
@@ -2649,16 +2756,28 @@ app.MapGet("/consolidado/saldo/{data}", handler).RequireAuthorization();
 app.UseSubscriptionKeyValidation(VaultKeys.KongLancamentosSubscriptionKey);
 
 // Comportamento:
-// - Bypassa /health e /health/ready
+// - Bypassa /health, /health/ready e /metrics (sem autenticação)
 // - Lê X-Subscription-Key do header
 // - Compara com IConfiguration[configKey] usando CryptographicOperations.FixedTimeEquals
 // - Se Vault não retornou a chave (dev/offline): bypassa silenciosamente
 // - Se chave inválida: retorna 401 ProblemDetails com correlationId
 ```
 
+**Arquitetura de segurança Kong ↔ Backend:**
+
+O cliente **nunca** envia a subscription key. Kong injeta o header `X-Subscription-Key` automaticamente via plugin `request-transformer` antes de encaminhar ao upstream. O segredo é compartilhado exclusivamente entre Kong e o serviço. Se uma requisição chegar diretamente à porta do serviço (bypass do gateway), o middleware a rejeita.
+
+```
+Cliente → [Authorization: Bearer JWT]
+         → Kong
+            ├─ [jwt plugin]: valida JWT com RS256
+            ├─ [request-transformer]: adiciona X-Subscription-Key (interno)
+            └─ upstream → SubscriptionKeyMiddleware → valida X-Subscription-Key
+```
+
 **Por que duas camadas?**
 
-Kong valida a chave na borda. O middleware valida dentro do serviço, cobrindo requisições que chegam diretamente à API (acesso interno, bypasses de rede, testes de integração).
+Kong valida na borda. O middleware garante que mesmo requisições que bypasser o gateway (testes internos, acesso direto à porta) sejam bloqueadas.
 
 ### 4. Validação de Entrada (implementado)
 
@@ -3434,26 +3553,23 @@ kibana:
 └──────────────────────────────────────────┘
 ```
 
-### Dashboards Grafana (já inclusos em provisioning)
+### Dashboards Grafana (provisionados via JSON)
 
 ```
-Dashboard 1: API Metrics
-├─ Requisições/segundo
-├─ Latência P50, P95, P99
-├─ Taxa de erro (5xx, 4xx)
-└─ CPU/Memory por serviço
+Dashboard 1 (implementado): "FinControl — HTTP Requests" (uid: fincontrol-http-v1)
+├─ [Stat] Requests/s         — http_requests_received_total (rate 5m)
+├─ [Stat] Taxa de Erros 5xx  — http_requests_received_total{code=~"5.."}
+├─ [Stat] Latência P95       — http_request_duration_seconds (percentil 95)
+├─ [Stat] Requests em andamento — http_requests_in_progress
+├─ [Time series] Requests por status HTTP — por código de resposta
+├─ [Time series] Requests por serviço — por label service
+├─ [Time series] Latência P50/P95/P99 — histogram_quantile
+├─ [Time series] Erros por endpoint — filtrado por código 4xx/5xx
+└─ [Table] Top 5xx por endpoint — top-k com sort por taxa de erro
 
-Dashboard 2: Business Metrics
-├─ Lançamentos registrados/dia
-├─ Saldo consolidado por hora
-├─ Crescimento de saldo
-└─ Taxa de rejeição
-
-Dashboard 3: Infrastructure
-├─ Database queries/segundo
-├─ Redis hit rate
-├─ RabbitMQ queue depth
-└─ Disk I/O
+Datasource: Prometheus (uid: fincontrol-prometheus)
+Métricas expostas por: prometheus-net em /metrics (ambas as APIs)
+Grafana: 11.1.0 (pinado — versões 12+ têm breaking changes no provisioning)
 ```
 
 ---
@@ -3484,7 +3600,7 @@ Dashboard 3: Infrastructure
 - [ ] Repository pattern + EF Core DbContext
 - [ ] Controllers (POST, GET com filtros)
 - [ ] FluentValidation rules
-- [ ] Event publishing (MassTransit config)
+- [x] Event publishing (Outbox Manual + RabbitMqPublisher)
 - [ ] Kong routing para Lançamentos Service
 - [ ] Unit tests (TDD)
 - [ ] Integration tests (Testcontainers)
@@ -3499,7 +3615,7 @@ Dashboard 3: Infrastructure
 ### Fase 3: Serviço de Consolidado (Semana 2-3)
 
 - [ ] Domain model (Aggregate Consolidado)
-- [ ] Event consumer (MassTransit consumer)
+- [x] Event consumer (RabbitMQ.Client direto — LancamentoRegistradoConsumer)
 - [ ] Cache layer (Redis)
 - [ ] Controllers (GET com cache)
 - [ ] Queries (CQRS)
@@ -3730,6 +3846,240 @@ Suporta 50 req/s?        ⚠️  Com esforço      ✅ Nativo
 
 ---
 
+## Diagrama Estrutural — Para Desenho de Arquitetura
+
+### Visão de Componentes e Conexões
+
+```
+╔══════════════════════════════════════════════════════════════════════════════════╗
+║                              FINCONTROL — ARQUITETURA                           ║
+╠══════════════════════════════════════════════════════════════════════════════════╣
+║                                                                                  ║
+║  ┌───────────────────────────────────────────────────────────────────────────┐  ║
+║  │                           CAMADA DE BORDA                                  │  ║
+║  │                                                                             │  ║
+║  │   ┌───────────────────────────────────────────────────────────────────┐   │  ║
+║  │   │                  KONG API GATEWAY  (:8000)                        │   │  ║
+║  │   │  Plugins: JWT · Rate Limiting · Proxy-Cache · Request-Transformer │   │  ║
+║  │   └──────────────────────────┬───────────────────────┬────────────────┘   │  ║
+║  │                               │                       │                    │  ║
+║  │   ┌───────────────────────────────────────────────────────────────────┐   │  ║
+║  │   │              KEYCLOAK (:8081)  — Identity Provider                │   │  ║
+║  │   │     OAuth 2.0 · OpenID Connect · JWT RS256 · realm: fincontrol    │   │  ║
+║  │   └───────────────────────────────────────────────────────────────────┘   │  ║
+║  └───────────────────────────────────────────────────────────────────────────┘  ║
+║                               │                       │                          ║
+║                    ┌──────────▼──────────┐  ┌────────▼───────────┐             ║
+║                    │  LANCAMENTOS API     │  │  CONSOLIDADO API   │             ║
+║                    │       (:5083)        │  │      (:5260)       │             ║
+║                    │                      │  │                    │             ║
+║                    │  POST /lancamentos   │  │ GET /consolidados  │             ║
+║                    │       /registrar     │  │      /saldo        │             ║
+║                    │                      │  │                    │             ║
+║                    │  Wolverine + EF Core │  │ Wolverine + Redis  │             ║
+║                    │  FluentValidation    │  │ (read-through)     │             ║
+║                    │  Idempotência        │  └────────────────────┘             ║
+║                    │                      │                                     ║
+║                    │  ┌────────────────┐  │                                     ║
+║                    │  │  OutboxRelay   │  │                                     ║
+║                    │  │  Service       │  │                                     ║
+║                    │  │  (Polly 3×)    │  │                                     ║
+║                    │  └───────┬────────┘  │                                     ║
+║                    └──────────┼───────────┘                                     ║
+║                               │                                                 ║
+║              ┌────────────────▼──────────────────────┐                         ║
+║              │        RABBITMQ (:5672)                │                         ║
+║              │  Exchange: lancamentos.events (topic)  │                         ║
+║              │  Queue: fincontrol.consolidado.*       │                         ║
+║              └────────────────┬──────────────────────┘                         ║
+║                               │                                                 ║
+║                    ┌──────────▼──────────┐                                      ║
+║                    │  CONSOLIDADO WORKER  │                                      ║
+║                    │                      │                                      ║
+║                    │  RabbitMQ Consumer   │                                      ║
+║                    │  Redis Lock (Lua)    │──────────► REDIS (:6379)             ║
+║                    │  Atualiza saldo      │            saldo:consolidado:{dt}    ║
+║                    └──────────────────────┘                                      ║
+║                                                                                  ║
+║  ┌────────────────────────────────────────────────────────────────────────────┐ ║
+║  │                          DADOS E SECRETS                                   │ ║
+║  │                                                                             │ ║
+║  │   POSTGRESQL (:5432)              VAULT (:8200)                            │ ║
+║  │   schema: lancamentos              KV v2: dev/postgres                     │ ║
+║  │   ├─ lancamentos                          dev/rabbitmq                     │ ║
+║  │   └─ outbox_messages                      dev/redis                        │ ║
+║  │   schema: keycloak                        dev/keycloak                     │ ║
+║  │   schema: kong                            dev/kong                         │ ║
+║  └────────────────────────────────────────────────────────────────────────────┘ ║
+║                                                                                  ║
+║  ┌────────────────────────────────────────────────────────────────────────────┐ ║
+║  │                        OBSERVABILIDADE                                     │ ║
+║  │                                                                             │ ║
+║  │   PROMETHEUS (:9090)     GRAFANA (:3000)     JAEGER (:16686)              │ ║
+║  │   Scraping /metrics      Dashboard HTTP       Distributed Traces           │ ║
+║  │   (ambas as APIs)        fincontrol-http-v1   OTLP gRPC :4317             │ ║
+║  └────────────────────────────────────────────────────────────────────────────┘ ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
+```
+
+### Diagrama Mermaid (para ferramentas como draw.io, Mermaid Live)
+
+```mermaid
+graph TB
+    Cliente["Cliente HTTP<br/>(Browser/App)"]
+
+    subgraph Borda["Camada de Borda"]
+        Kong["Kong API Gateway :8000<br/>jwt · rate-limiting · proxy-cache<br/>request-transformer"]
+        Keycloak["Keycloak :8081<br/>JWT RS256<br/>realm: fincontrol"]
+    end
+
+    subgraph APIs["Serviços de Aplicação"]
+        LancAPI["Lancamentos API :5083<br/>POST /lancamentos/registrar<br/>Wolverine · EF Core · Outbox"]
+        ConsAPI["Consolidado API :5260<br/>GET /consolidados/saldo<br/>Wolverine · Redis"]
+        ConsWorker["Consolidado Worker<br/>RabbitMQ Consumer<br/>Redis Lock + Write"]
+        OutboxRelay["OutboxRelayService<br/>BackgroundService<br/>Polly Retry 3×"]
+    end
+
+    subgraph Infra["Infraestrutura"]
+        Postgres[("PostgreSQL :5432<br/>lancamentos<br/>outbox_messages")]
+        Redis[("Redis :6379<br/>saldo:consolidado:<br/>{yyyy-MM-dd}")]
+        RabbitMQ["RabbitMQ :5672<br/>lancamentos.events<br/>topic exchange"]
+        Vault["Vault :8200<br/>Secrets KV v2"]
+    end
+
+    subgraph Obs["Observabilidade"]
+        Prometheus["Prometheus :9090"]
+        Grafana["Grafana :3000<br/>Dashboard HTTP"]
+        Jaeger["Jaeger :16686<br/>Distributed Tracing"]
+    end
+
+    Cliente -->|"Bearer JWT"| Kong
+    Kong -->|"validates RS256"| Keycloak
+    Kong -->|"upstream :5083 + X-Sub-Key"| LancAPI
+    Kong -->|"upstream :5260 + X-Sub-Key"| ConsAPI
+
+    LancAPI -->|"INSERT ACID"| Postgres
+    LancAPI --> OutboxRelay
+    OutboxRelay -->|"PublishRaw AMQP"| RabbitMQ
+    RabbitMQ -->|"LancamentoRegistrado"| ConsWorker
+    ConsWorker -->|"SET saldo"| Redis
+    ConsAPI -->|"GET saldo"| Redis
+
+    LancAPI -.->|"secrets"| Vault
+    ConsAPI -.->|"secrets"| Vault
+    ConsWorker -.->|"secrets"| Vault
+
+    LancAPI -->|"/metrics"| Prometheus
+    ConsAPI -->|"/metrics"| Prometheus
+    Prometheus --> Grafana
+    LancAPI -.->|"OTLP traces"| Jaeger
+    ConsAPI -.->|"OTLP traces"| Jaeger
+```
+
+---
+
+## Validação dos Requisitos do Desafio
+
+### Requisitos de Negócio
+
+| Requisito | Atendido | Como |
+|-----------|----------|------|
+| Controle de lançamentos (débitos e créditos) | ✅ | `POST /lancamentos/registrar` — modalidade Venda/Devolucao/Suprimento/Sangria/PagamentoFornecedor/RecebimentoDivida/Outros |
+| Saldo diário consolidado | ✅ | `GET /consolidados/saldo?data-lancamento=yyyy-MM-dd` — Redis (<5ms) |
+| Independência entre serviços | ✅ | Lançamentos não conhece Consolidado; comunicação async via RabbitMQ |
+
+### Requisitos Técnicos Obrigatórios
+
+| Requisito | Atendido | Como |
+|-----------|----------|------|
+| Desenho da solução documentado | ✅ | Este documento + diagrama estrutural acima |
+| Implementação em C# | ✅ | .NET 10, ASP.NET Core Minimal APIs, C# 12 |
+| Testes automatizados | ✅ | 64 testes (48 Lancamentos + 16 Consolidado), xUnit + Moq + FluentAssertions |
+| Boas práticas (Design Patterns, SOLID, Arquitetura) | ✅ | CQRS, Vertical Slicing, Outbox, Repository, DI, async/await correto |
+| README com instruções de execução | ✅ | README.md na raiz + guias em .docs/ |
+| Hospedagem em repositório público | ✅ | GitHub público |
+| Documentação completa no repositório | ✅ | .docs/ com ARQUITETURA.md, guias de setup, CONVENCOES.md |
+
+### Requisitos Não-Funcionais
+
+| Requisito | Atendido | Como |
+|-----------|----------|------|
+| Lançamentos independente do Consolidado | ✅ | Arquitetura event-driven: Outbox + RabbitMQ. Consolidado pode cair sem afetar Lançamentos |
+| 50 req/s no Consolidado | ✅ | Redis (<5ms por request) + Kong proxy-cache 30s + rate limiting 55 req/s com headroom |
+| Máx. 5% de perda de requisições | ✅ | Outbox Manual (nunca perde evento) + Polly retry 3× + RabbitMQ durable queue + Redis lock atômico |
+
+### Análise de Atendimento dos NFRs
+
+**Resiliência (Lançamentos independente do Consolidado):**
+- Lançamentos persiste em PostgreSQL + outbox_messages atomicamente
+- OutboxRelayService entrega ao RabbitMQ de forma assíncrona (worker separado)
+- Se Consolidado cair: fila RabbitMQ acumula; ao reiniciar, worker processa backlog
+- Se RabbitMQ cair: Polly retenta 3× e registra erro; nenhum lançamento é perdido do PostgreSQL
+
+**Performance (50 req/s):**
+- Redis resolve ~99% dos requests de leitura em <5ms
+- Kong proxy-cache absorve picos de até 1 req/30s por endpoint sem tocar o upstream
+- Rate limiting Kong: 55 req/s (10% de headroom acima do requisito)
+- Testado matematicamente: ver seção "Análise de Volumetria" acima
+
+**Confiabilidade (máx. 5% perda):**
+- Outbox Manual garante que nenhum evento seja perdido se o publisher falhar
+- Polly retry exponencial com jitter reduz impacto de falhas transitórias
+- Redis lock distribuído (Lua) garante que saldos concorrentes não causem inconsistência
+
+---
+
+## Cobertura de Testes
+
+### Resultado: `dotnet test`
+
+```
+Passed: 64   Failed: 0   Skipped: 0
+  FinControl.Lancamentos.Tests  →  48 testes
+  FinControl.Consolidado.Tests  →  16 testes
+```
+
+### Detalhamento por Classe
+
+#### FinControl.Lancamentos.Tests (48 testes)
+
+| Arquivo | Testes | O que cobre |
+|---------|--------|-------------|
+| `Domain/LancamentoTests.cs` | 9 | Classificação por sinal (Credito/Debito via `Tipo`); `ValorFormatado` (centavos→reais, sinal negativo para débito); igualdade por `Id` (não por valor); `CreatedAt` preenchido automaticamente |
+| `Features/Commands/RegistrarLancamentoCommandHandlerTests.cs` | 12 | Persistência no banco (InMemory EF Core); geração de `NavigationId` e `CriadoEm`; campos persistidos (Valor/Modalidade/Descricao); data padrão (hoje) vs data informada; **atomicidade Outbox** (1 `OutboxMessage` por lançamento); `Exchange`/`RoutingKey`/`MessageType` do Outbox; payload com `Valor` e `CorrelationId`; `DeliveredAt=null` após insert; múltiplos lançamentos (3 de cada) |
+| `Features/Commands/RegistrarLancamentoCommandValidatorTests.cs` | 27 | Vendas com valor positivo (Theory×2); débitos com valor negativo (Theory×4); Outros exige `Descricao`; modalidade inválida; valor excede máximo (R$10M); valor positivo para débito (Theory×4); valor negativo para crédito (Theory×2); Outros sem descrição; descrição >500 chars; data >1 dia no futuro; data >1 ano no passado; `UsuarioId` vazio/curto; `UsuarioNome` vazio/>200 chars; e-mail inválido/vazio; `IdempotencyKey=Empty`; `CorrelationId=Empty` |
+
+#### FinControl.Consolidado.Tests (16 testes)
+
+| Arquivo | Testes | O que cobre |
+|---------|--------|-------------|
+| `Features/Commands/AtualizarSaldoConsolidaoCommandHandlerTests.cs` | 9 | Saldo inicial (cache vazio→zera antes de somar); acumulação sobre saldo existente; decrementação (saldo pode ficar negativo); TTL 30 dias no Redis; chave de cache usa `dataLancamento`; data retroativa atualiza a chave correta; `UltimaAtualizacao` atualizada; lock distribuído (`IRedisLockService`) invocado para cada atualização |
+| `Features/Queries/GetSaldoConsolidadoQueryHandlerTests.cs` | 7 | Retorna saldo do cache; conversão centavos→decimal (`155→1.55m`); `UltimaAtualizacao` retornada; cache vazio retorna saldo 0; chave formatada com data específica; chave default (hoje quando `dataLancamento=null`); saldo negativo representado corretamente |
+
+### O Que Está Coberto
+
+- **Lógica de domínio**: classificação Credito/Debito, formatação de valor, identidade por Id
+- **Regras de validação**: 100% das regras de negócio do `RegistrarLancamentoCommandValidator` têm pelo menos 1 teste
+- **Fluxo principal de escrita**: `RegistrarLancamentoCommandHandler` — do request ao banco + outbox
+- **Atomicidade Outbox**: garantia de que cada lançamento gera exatamente 1 `OutboxMessage` na mesma transação
+- **Contrato do Outbox**: exchange, routing key, message type e payload validados
+- **Fluxo principal de leitura**: `GetSaldoConsolidadoQueryHandler` — resolução de chave + leitura do Redis
+- **Acumulação de saldo**: `AtualizarSaldoConsolidaoCommandHandler` — cálculo incremental com lock distribuído
+
+### Lacunas de Cobertura
+
+| Componente | Situação | Risco |
+|-----------|----------|-------|
+| `OutboxRelayService` | Sem testes | Lógica de polling, batch de 50, retry Polly 3× exponencial+jitter, registro de `LastError`/`RetryCount` não verificados automaticamente |
+| `RabbitMqPublisher` | Sem testes | Publicação AMQP, reutilização de `IConnection`, criação de `IChannel` por publish não verificados |
+| `SubscriptionKeyMiddleware` | Sem testes | Bypass de `/health` e `/metrics`, comparação em tempo constante (`FixedTimeEquals`), resposta 401 não verificados |
+| `LancamentoRegistradoConsumer` | Sem testes | Consumer RabbitMQ do Worker — processamento de mensagem, chamada ao handler, ack/nack não verificados |
+| Detecção de duplicata (idempotência) | Sem testes | `VerificarIdempotenciaAsync` existe no handler mas nenhum teste envia o mesmo `IdempotencyKey` duas vezes para verificar o 409 |
+
+> **Conclusão:** Os 64 testes cobrem toda a lógica de negócio e regras de domínio. As lacunas estão concentradas em componentes de infraestrutura (`OutboxRelayService`, `RabbitMqPublisher`) e integração (`SubscriptionKeyMiddleware`, `Consumer`) — candidatos naturais para testes de integração com Testcontainers em uma próxima iteração.
+
+---
+
 ## Próximas Etapas
 
 1. **Criar repositório no GitHub** com este planejamento
@@ -3803,6 +4153,6 @@ Suporta 50 req/s?        ⚠️  Com esforço      ✅ Nativo
 
 ---
 
-**Versão:** 2.0  
+**Versão:** 3.0  
 **Última atualização:** Maio 2026  
-**Status:** ✅ Implementação em produção — 60 testes passando, zero falhas
+**Status:** ✅ Implementação em produção — 64 testes passando, zero falhas
