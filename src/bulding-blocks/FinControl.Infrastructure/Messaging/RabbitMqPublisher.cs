@@ -10,7 +10,7 @@ namespace FinControl.Infrastructure.Messaging;
 /// Publica mensagens diretamente em um exchange RabbitMQ via AMQP.
 /// Mantém uma única IConnection reutilizável (thread-safe) e cria um IChannel por publicação.
 /// </summary>
-public sealed class RabbitMqPublisher : IAsyncDisposable
+public sealed class RabbitMqPublisher : IRabbitMqPublisher, IAsyncDisposable
 {
     private readonly string? _rabbitMqUri;
     private readonly ILogger<RabbitMqPublisher> _logger;

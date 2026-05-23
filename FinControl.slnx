@@ -18,4 +18,8 @@
     <Project Path="src/Modules/Lancamentos/FinControl.Lancamentos.API/FinControl.Lancamentos.API.csproj" />
     <Project Path="src/Modules/Lancamentos/FinControl.Lancamentos.Core/FinControl.Lancamentos.Core.csproj" Id="2bcf11a4-50cb-4eac-bb89-1f423acabe63" />
   </Folder>
+  <Folder Name="/src/tests/">
+    <Project Path="src/tests/FinControl.Lancamentos.Tests/FinControl.Lancamentos.Tests.csproj" />
+    <Project Path="src/tests/FinControl.Consolidado.Tests/FinControl.Consolidado.Tests.csproj" />
+  </Folder>
 </Solution>

@@ -38,7 +38,9 @@ public class RegistrarLancamentoCommandValidator : AbstractValidator<RegistrarLa
         RuleFor(x => x.Descricao)
             .NotEmpty()
             .When(x => x.Modalidade == ModalidadeLancamento.Outros)
-            .WithMessage("Descrição é obrigatória para lançamentos do tipo 'Outros'.")
+            .WithMessage("Descrição é obrigatória para lançamentos do tipo 'Outros'.");
+
+        RuleFor(x => x.Descricao)
             .MaximumLength(500)
             .When(x => !string.IsNullOrWhiteSpace(x.Descricao))
             .WithMessage("Descrição não pode exceder 500 caracteres.");

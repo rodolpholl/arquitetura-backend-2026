@@ -53,7 +53,7 @@ public static class WolverineExtensions
         // Em desenvolvimento, RabbitMQ é opcional
         var isRabbitMqAvailable = !string.IsNullOrEmpty(rabbitMqUri);
 
-        builder.Services.AddSingleton<RabbitMqPublisher>();
+        builder.Services.AddSingleton<IRabbitMqPublisher, RabbitMqPublisher>();
         builder.Services.AddWolverineHttp();
 
         builder.Host.UseWolverine(opts =>

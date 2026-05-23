@@ -8,7 +8,7 @@ namespace FinControl.Lancamentos.Core.Features.Commands.RegistrarLancamento;
 
 public class RegistrarLancamentoCommandHandler(
     LancamentosDbContext db,
-    RabbitMqPublisher publisher,
+    IRabbitMqPublisher publisher,
     ILogger<RegistrarLancamentoCommandHandler> logger)
 {
     private const string Exchange = "lancamentos.events";
