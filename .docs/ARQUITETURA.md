@@ -1,8 +1,45 @@
-﻿# 🏗️ Planejamento Arquitetural - Sistema de Controle de Fluxo de Caixa
+﻿# 🏗️ Arquitetura - Sistema de Controle de Fluxo de Caixa
 
-**Projeto:** Sistema de Controle de Fluxo de Caixa para Comerciante  
+**Projeto:** FinControl — Sistema de Controle de Fluxo de Caixa para Comerciante  
 **Data:** Maio 2026  
-**Versão:** 1.0
+**Versão:** 2.0 — Implementação em produção
+
+---
+
+## Status de Implementação
+
+> Esta documentação foi atualizada para refletir o estado **implementado** do projeto (v2.0).  
+> As seções de justificativas e volumetria permanecem como referência arquitetural.
+
+### O que está implementado
+
+| Componente | Status | Observações |
+|-----------|--------|-------------|
+| **FinControl.Lancamentos.API** | ✅ Funcional | `POST /lancamentos`, `GET /lancamentos` + Wolverine + Vault + JWT |
+| **FinControl.Lancamentos.Core** | ✅ Funcional | CQRS, validação FluentValidation, EF Core, Outbox |
+| **FinControl.Consolidado.API** | ✅ Funcional | `GET /consolidado/saldo/{data}` via Redis |
+| **FinControl.Consolidado.Core** | ✅ Funcional | Command + Query handlers |
+| **FinControl.Consolidado.Worker** | ✅ Funcional | Consumer RabbitMQ → atualiza Redis |
+| **FinControl.Infrastructure** | ✅ Funcional | Cache, Lock, Vault, Middleware, Observability |
+| **FinControl.SharedKernel** | ✅ Funcional | Entidades base, eventos, resultado tipado |
+| **FinControl.Auth** | ✅ Funcional | Integração Keycloak (JWT Bearer) |
+| **HashiCorp Vault** | ✅ Integrado | Secrets carregados via `VaultConfigurationProvider` |
+| **Redis (Cache + Lock)** | ✅ Integrado | `RedisCacheService` + `IRedisLockService` (SETNX + Lua) |
+| **RabbitMQ (Outbox)** | ✅ Integrado | Wolverine Outbox no Lancamentos + Consumer direto no Worker |
+| **PostgreSQL + Migrations** | ✅ Integrado | Auto-apply no startup (fail-fast), `AddIdempotencyKey` aplicada |
+| **Idempotência** | ✅ Implementado | `IdempotencyKey` (UUID) + índice único no BD |
+| **Soft Delete** | ✅ Implementado | Global query filter `DeletedAt == null` |
+| **SubscriptionKeyMiddleware** | ✅ Implementado | Segunda camada de segurança após Kong |
+| **Testes automatizados** | ✅ 60 testes | 46 (Lancamentos) + 14 (Consolidado), zero falhas |
+
+### O que está em aberto (roadmap)
+
+| Item | Motivo adiado |
+|------|--------------|
+| `totalCreditos`/`totalDebitos` no saldo consolidado | Redesign do modelo de resposta |
+| `Lancamento` herdar `AggregateRoot<long>` | Refatoração de escopo maior |
+| Deduplicação de `ModalidadeLancamento` (enum duplicado) | Impacto em cast `(ModalidadeLancamento)(int)` |
+| Setters públicos → encapsulamento em `Lancamento` | Modelo anêmico — refatoração de domínio |
 
 ---
 
@@ -537,53 +574,46 @@ GET /consolidado/{data}:
   └─ Redis MISS (cold start / flush) → Calcula do BD → Cacheia → Retorna
 ```
 
-#### Implementação C# — Consumer de Invalidação de Cache
+#### Implementação C# — Handler de atualização do cache (implementado)
 
 ```csharp
-// Consolidado.Application/Consumers/LancamentoRegistradoConsumer.cs
-public sealed class LancamentoRegistradoConsumer(
-    IConsolidadoRepository repository,
-    IDatabase redis,
-    ILogger<LancamentoRegistradoConsumer> logger)
-    : IConsumer<LancamentoRegistrado>
+// FinControl.Consolidado.Core/Features/Commands/AtualizarSaldoConsolidao/
+public class AtualizarSaldoConsolidadoCommandHandler(
+    RedisCacheService cache,
+    IRedisLockService lockService,
+    ILogger<AtualizarSaldoConsolidadoCommandHandler> logger)
 {
-    private const string CacheKeyPrefix = "consolidado";
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromDays(1);
+    private static string CacheKey(DateOnly data) => $"saldo:consolidado:{data:yyyy-MM-dd}";
+    private static string LockKey(DateOnly data)  => $"lock:saldo:consolidado:{data:yyyy-MM-dd}";
 
-    public async Task Consume(ConsumeContext<LancamentoRegistrado> context)
+    public async Task Handle(AtualizarSaldoConsolidadoCommand command, CancellationToken ct = default)
     {
-        var data = context.Message.DataLancamento.Date;
-        var cacheKey = $"{CacheKeyPrefix}:{data:yyyy-MM-dd}";
+        // Usa a data do LANÇAMENTO — não UtcNow — para consolidar no dia correto
+        var data = DateOnly.FromDateTime(command.DataLancamento.UtcDateTime);
 
-        logger.LogInformation(
-            "Atualizando cache para {Data} após lançamento {LancamentoId}",
-            data, context.Message.LancamentoId);
+        var acquired = await lockService.ExecuteWithLockAsync(
+            lockKey: LockKey(data),
+            action: async () =>
+            {
+                var atual = await cache.GetAsync<SaldoConsolidado>(CacheKey(data), ct);
+                var novoSaldo = new SaldoConsolidado(
+                    Saldo: (atual?.Saldo ?? 0) + command.ValorLancamento,
+                    UltimaAtualizacao: DateTimeOffset.UtcNow);
+                await cache.SetAsync(CacheKey(data), novoSaldo, TimeSpan.FromDays(30), ct);
+            },
+            lockExpiry: TimeSpan.FromSeconds(10),
+            ct: ct);
 
-        // Recalcula saldo consolidado do dia afetado
-        var saldo = await repository.CalcularSaldoConsolidadoAsync(data, context.CancellationToken);
-
-        var payload = JsonSerializer.Serialize(new ConsolidadoCacheEntry(
-            Data: data,
-            SaldoTotal: saldo.SaldoTotal,
-            TotalCreditos: saldo.TotalCreditos,
-            TotalDebitos: saldo.TotalDebitos,
-            AtualizadoEm: DateTimeOffset.UtcNow));
-
-        await redis.StringSetAsync(cacheKey, payload, CacheTtl);
-
-        logger.LogInformation(
-            "Cache atualizado: {Key} = SaldoTotal {Saldo}",
-            cacheKey, saldo.SaldoTotal);
+        if (!acquired)
+            throw new InvalidOperationException(
+                $"Nao foi possivel adquirir lock para {data:yyyy-MM-dd}. Sera reprocessado.");
     }
 }
-
-public sealed record ConsolidadoCacheEntry(
-    DateOnly Data,
-    decimal SaldoTotal,
-    decimal TotalCreditos,
-    decimal TotalDebitos,
-    DateTimeOffset AtualizadoEm);
 ```
+
+**Por que TTL de 30 dias (e não 60 segundos)?**
+
+Com a estratégia event-driven, o cache é atualizado *a cada lançamento registrado* — não expira passivamente. TTL longo significa que registros históricos (dias anteriores) ficam disponíveis sem cold start, enquanto o dia corrente é sempre fresco via evento.
 
 #### Implementação C# — Outbox Pattern (garante entrega mesmo com crash)
 
@@ -1480,66 +1510,97 @@ Requisição GET /saldo/2026-05-20
 
 ## Stack Técnico
 
-### Backend
+### Backend (implementado)
 
 ```
 ┌─ Framework
-│  └─ ASP.NET Core 8+ (Minimal APIs ou Controllers)
+│  └─ ASP.NET Core 10 / .NET 10 (Minimal APIs)
+│     └─ Scalar UI para documentação OpenAPI (não Swagger)
+│
+├─ CQRS & Mediator
+│  └─ WolverineFx (Lancamentos — handlers, Outbox, middleware pipeline)
+│     ├─ ValidationMiddleware (FluentValidation automático)
+│     ├─ LoggingMiddleware (CorrelationId propagado)
+│     └─ Outbox Pattern (transação atômica com PostgreSQL)
 │
 ├─ ORM & Data Access
-│  └─ Entity Framework Core 8+
-│     └─ Migrations automáticas
+│  ├─ Entity Framework Core 10 (Npgsql provider)
+│  │  ├─ Migrations aplicadas automaticamente no startup (fail-fast)
+│  │  ├─ Global query filter: soft-delete (DeletedAt == null)
+│  │  └─ AsNoTracking para queries de leitura
+│  └─ Repository Pattern (Ardalis.Specification)
 │
 ├─ Message Bus
-│  ├─ MassTransit (Recomendado - abstração)
-│  ├─ RabbitMQ (ou Azure Service Bus)
-│  └─ NServiceBus (Alternativa - mais completo)
+│  ├─ WolverineFx.RabbitMQ (publisher no Lancamentos via Outbox)
+│  └─ RabbitMQ.Client direto (consumer no Consolidado.Worker)
+│     ├─ Topic exchange: lancamentos.events
+│     ├─ Queue: fincontrol.consolidado.lancamento-registrado
+│     ├─ Dead-letter exchange: wolverine-dead-letter-queue
+│     ├─ prefetchCount: 10, autoAck: false
+│     └─ Reconexão exponencial (5s → 60s)
 │
-├─ Caching
-│  ├─ Redis (StackExchange.Redis)
-│  └─ TTL configurável por chave
+├─ Caching & Distributed Lock
+│  ├─ IDistributedCache (StackExchange.Redis)
+│  ├─ RedisCacheService (wrapper com serialização JSON camelCase)
+│  ├─ IRedisLockService / RedisLockService
+│  │  ├─ SETNX (StringSetAsync When.NotExists)
+│  │  ├─ 5 tentativas × 100ms de espera
+│  │  └─ Release atômico via Lua (garante que só o dono libera)
+│  └─ Chave de cache: saldo:consolidado:{yyyy-MM-dd}, TTL 30 dias
 │
 ├─ Validation
-│  └─ FluentValidation (Regras de negócio em código)
+│  └─ FluentValidation (avaliação em runtime — não valores capturados)
 │
 ├─ Logging
-│  ├─ Serilog (Structured logging)
-│  └─ Sinks: Console, File, ELK
+│  ├─ Serilog (structured logging)
+│  └─ Sinks: Console, File, Grafana Loki
+│     └─ CorrelationId enriquecido em todos os logs
+│
+├─ Secrets Management
+│  ├─ HashiCorp Vault KV v2 (VaultSharp)
+│  └─ VaultConfigurationProvider (integrado ao pipeline IConfiguration)
+│     └─ vault.settings.json / vault.settings.{Env}.json
+│
+├─ Identity & Auth
+│  ├─ Keycloak (JWT Bearer via AddFinControlKeycloakAuth())
+│  └─ SubscriptionKeyMiddleware
+│     ├─ Valida header X-Subscription-Key contra Vault
+│     ├─ Usa CryptographicOperations.FixedTimeEquals (timing-safe)
+│     └─ Bypassa /health — segunda camada após Kong
+│
+├─ Idempotência
+│  ├─ IdempotencyKey (UUID) no payload de criação de lançamento
+│  ├─ Armazenado na entidade Lancamento
+│  └─ Índice único: idx_lancamento_idempotency_key
 │
 ├─ Testing
-│  ├─ xUnit (Framework de testes)
-│  ├─ Moq (Mocking)
-│  ├─ Testcontainers (Testes de integração com PostgreSQL/Redis)
-│  └─ FluentAssertions (Asserts legíveis)
+│  ├─ xUnit (framework de testes)
+│  ├─ Moq (mocking — IDistributedCache, IRedisLockService)
+│  ├─ FluentAssertions (asserts legíveis)
+│  └─ Bogus (geradores de dados — Faker<T>)
 │
 └─ Observability
-   ├─ OpenTelemetry (Distributed tracing)
-   ├─ Prometheus (Métricas)
-   └─ Grafana (Dashboards)
+   ├─ OpenTelemetry (traces + métricas HTTP, EF Core, HTTP client)
+   ├─ prometheus-net (métricas expostas em /metrics)
+   └─ Serilog + Loki (logs estruturados)
 ```
 
 ### Infraestrutura
 
 ```
-WAF & Firewall:      ModSecurity 3.0+ (Web Application Firewall)
-                     └─ OWASP Top 10 protection, tipo Cloudflare (grátis)
-API Gateway:         Kong 3.4+ (Rate limiting, Circuit breaker, Auth plugins)
-                     └─ Load balancing, Ingress Controller
+WAF & Firewall:      ModSecurity 3.0+ (OWASP Top 10 protection)
+API Gateway:         Kong 3.4+ (rate limiting, circuit breaker, auth plugins)
+                     └─ X-Subscription-Key injetado pelo Kong nos serviços
 Database:            PostgreSQL 15+
-Cache:               Redis 7+
-Message Bus:         RabbitMQ 3.12+ ou Azure Service Bus
-Secrets Management:  Hashicorp Vault 1.15+ (chaves, senhas, tokens)
+Cache:               Redis 7+ (StackExchange.Redis, prefixo FinControl:)
+Message Bus:         RabbitMQ 3.12+
+                     └─ Exchange: lancamentos.events (topic, durable)
+Secrets Management:  HashiCorp Vault 1.15+ (KV v2)
 Identity Provider:   Keycloak 23+ (SSO, OAuth2, OIDC)
-Observability:       OpenTelemetry + Prometheus + Loki + Jaeger
-                     └─ Logs (Serilog + Loki)
-                     └─ Metrics (Prometheus)
-                     └─ Traces (Jaeger)
+Observability:       OpenTelemetry + prometheus-net + Serilog + Loki
 Dashboard:           Grafana 10+ (visualização unificada)
-Container:           Docker
-Orchestration:       Docker Compose (dev) / Kubernetes (prod)
-                     └─ Kong Ingress Controller (recomendado para K8s)
+Container:           Docker + Docker Compose (dev/prod)
 CI/CD:               GitHub Actions
-Detecção:            Fail2Ban (comportamental, bota IPs suspeitos)
 ```
 
 ---
@@ -1555,26 +1616,51 @@ Detecção:            Fail2Ban (comportamental, bota IPs suspeitos)
 
 ---
 
-### Versões Recomendadas
+### Pacotes utilizados (net10.0)
 
 ```xml
-<ItemGroup>
-  <PackageReference Include="Microsoft.AspNetCore.App" Version="8.0" />
-  <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.4" />
-  <PackageReference Include="MassTransit" Version="8.0.0" />
-  <PackageReference Include="StackExchange.Redis" Version="2.7.0" />
-  <PackageReference Include="Serilog.AspNetCore" Version="8.0.0" />
-  <PackageReference Include="FluentValidation" Version="11.9.0" />
-  <PackageReference Include="Polly" Version="8.2.1" />
-  <PackageReference Include="OpenTelemetry" Version="1.8.0" />
-</ItemGroup>
+<!-- Lancamentos.Core / Consolidado.Core -->
+<PackageReference Include="WolverineFx" />
+<PackageReference Include="WolverineFx.Http" />
+<PackageReference Include="WolverineFx.EntityFrameworkCore" />
+<PackageReference Include="WolverineFx.RabbitMQ" />
+<PackageReference Include="Microsoft.EntityFrameworkCore" />
+<PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+<PackageReference Include="FluentValidation" />
+<PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
+<PackageReference Include="Ardalis.Specification" />
+<PackageReference Include="Ardalis.Specification.EntityFrameworkCore" />
 
-<ItemGroup>
-  <PackageReference Include="xunit" Version="2.7.0" />
-  <PackageReference Include="Moq" Version="4.20.0" />
-  <PackageReference Include="Testcontainers" Version="3.7.0" />
-  <PackageReference Include="FluentAssertions" Version="6.12.0" />
-</ItemGroup>
+<!-- Infrastructure (building block) -->
+<PackageReference Include="StackExchange.Redis" />
+<PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" />
+<PackageReference Include="VaultSharp" />
+<PackageReference Include="Serilog.AspNetCore" />
+<PackageReference Include="Serilog.Sinks.Grafana.Loki" />
+<PackageReference Include="Serilog.Enrichers.CorrelationId" />
+<PackageReference Include="prometheus-net.AspNetCore" />
+<PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+<PackageReference Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" />
+<PackageReference Include="Polly" />
+<PackageReference Include="AspNetCore.HealthChecks.NpgSql" />
+<PackageReference Include="AspNetCore.HealthChecks.Redis" />
+<PackageReference Include="AspNetCore.HealthChecks.Rabbitmq" />
+
+<!-- Consolidado.Worker (consumer RabbitMQ direto) -->
+<PackageReference Include="RabbitMQ.Client" />
+<PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" />
+
+<!-- API -->
+<PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+<PackageReference Include="Scalar.AspNetCore" />
+
+<!-- Testes -->
+<PackageReference Include="xunit" />
+<PackageReference Include="Moq" />
+<PackageReference Include="FluentAssertions" />
+<PackageReference Include="Bogus" />
 ```
 
 ---
@@ -1678,217 +1764,158 @@ Vantagem: Tudo relativo a "RegistrarDebito" está em UM lugar!
 
 ## Estrutura de Pastas
 
-**Recomendação: Usar Vertical Slicing + CQRS ao invés de arquitetura em camadas**
+**Estrutura real implementada** — Módulos independentes + building blocks compartilhados.
 
 ```
-TesteBancoCarrefour/
-├── docs/
-│   ├── ARQUITETURA.md           (Este arquivo)
-│   ├── FLUXOS_DADOS.md
-│   └── API_SPECS.md
+arquitetura-backend-2026/
+├── .docs/
+│   └── ARQUITETURA.md                          ← Este arquivo
 │
 ├── src/
-│   ├── Lancamentos.API/         (Write Model - Microserviço)
-│   │   ├── Features/            ← Vertical Slicing (cada feature é uma pasta)
-│   │   │   ├── RegistrarDebito/
-│   │   │   │   ├── RegistrarDebitoCommand.cs
-│   │   │   │   ├── RegistrarDebitoHandler.cs
-│   │   │   │   ├── RegistrarDebitoValidator.cs
-│   │   │   │   ├── DebitoRequest.cs
-│   │   │   │   ├── DebitoResponse.cs
-│   │   │   │   └── RegistrarDebitoTests.cs
-│   │   │   ├── RegistrarCredito/
-│   │   │   │   ├── RegistrarCreditoCommand.cs
-│   │   │   │   ├── RegistrarCreditoHandler.cs
-│   │   │   │   ├── RegistrarCreditoValidator.cs
-│   │   │   │   ├── CreditoRequest.cs
-│   │   │   │   ├── CreditoResponse.cs
-│   │   │   │   └── RegistrarCreditoTests.cs
-│   │   │   ├── ObterLancamentos/
-│   │   │   │   ├── ObterLancamentosQuery.cs
-│   │   │   │   ├── ObterLancamentosHandler.cs
-│   │   │   │   ├── LancamentosResponse.cs
-│   │   │   │   └── ObterLancamentosTests.cs
+│   ├── Modules/
 │   │   │
-│   │   ├── Shared/              ← Código compartilhado do microserviço
-│   │   │   ├── Domain/
-│   │   │   │   ├── Entities/
-│   │   │   │   │   ├── Lancamento.cs
-│   │   │   │   │   └── LancamentoId.cs
-│   │   │   │   ├── Events/
-│   │   │   │   │   ├── LancamentoRegistradoEvent.cs
-│   │   │   │   │   └── DomainEvent.cs
-│   │   │   │   └── ValueObjects/
-│   │   │   │       ├── Valor.cs
-│   │   │   │       └── TipoLancamento.cs (Enum)
-│   │   │   ├── Infrastructure/
-│   │   │   │   ├── Data/
-│   │   │   │   │   ├── LancamentosDbContext.cs
-│   │   │   │   │   └── Migrations/
-│   │   │   │   ├── Events/
-│   │   │   │   │   └── LancamentoEventPublisher.cs
-│   │   │   │   ├── Persistence/
-│   │   │   │   │   └── LancamentoRepository.cs
-│   │   │   │   └── Configuration/
-│   │   │   │       ├── DatabaseConfig.cs
-│   │   │   │       └── MassTransitConfig.cs
-│   │   │   ├── Behaviors/
-│   │   │   │   ├── ValidationBehavior.cs     ← Comportamento global de validação
-│   │   │   │   ├── LoggingBehavior.cs        ← Comportamento global de logging
-│   │   │   │   └── PerformanceBehavior.cs    ← Comportamento global de performance
-│   │   │   ├── Exceptions/
-│   │   │   │   ├── DomainException.cs
-│   │   │   │   └── ApplicationException.cs
-│   │   │   └── Extensions/
-│   │   │       └── ServiceExtensions.cs      ← DI Registration
+│   │   ├── Lancamentos/                         ← Módulo Write (CQRS Command side)
+│   │   │   │
+│   │   │   ├── FinControl.Lancamentos.API/      ← Entrada HTTP (Minimal APIs)
+│   │   │   │   ├── Configuration/
+│   │   │   │   │   ├── ApplicationModules.cs   ← Registro de todos os módulos
+│   │   │   │   │   └── BearerSecuritySchemeTransformer.cs
+│   │   │   │   ├── ModuleExtensions.cs         ← AddAllModules / MapAllModules
+│   │   │   │   └── Program.cs                  ← Vault → Serilog → DB → JWT →
+│   │   │   │                                      SubscriptionKey → Swagger/Scalar
+│   │   │   │
+│   │   │   └── FinControl.Lancamentos.Core/    ← Domínio + Features + Persistence
+│   │   │       ├── Context/
+│   │   │       │   ├── DbMapping/
+│   │   │       │   │   └── LancamentoDbMapping.cs   ← EF mapping + índices
+│   │   │       │   ├── LancamentosDbContext.cs       ← Global filter soft-delete
+│   │   │       │   └── LancamentosDbContextFactory.cs
+│   │   │       ├── Domain/
+│   │   │       │   ├── Enums/
+│   │   │       │   │   ├── ModalidadeLancamentoEnum.cs
+│   │   │       │   │   └── TipoLancamentoEnum.cs
+│   │   │       │   └── Lancamento.cs                 ← Entidade: IdempotencyKey,
+│   │   │       │                                         soft-delete, TipoFormatado
+│   │   │       ├── Features/
+│   │   │       │   ├── Commands/
+│   │   │       │   │   └── RegistrarLancamento/
+│   │   │       │   │       ├── RegistrarLancamentoCommand.cs
+│   │   │       │   │       ├── RegistrarLancamentoCommandHandler.cs ← Idempotência
+│   │   │       │   │       ├── RegistrarLancamentoCommandValidator.cs ← .Must() runtime
+│   │   │       │   │       ├── RegistrarLancamentoEndpoint.cs
+│   │   │       │   │       └── RegistrarLancamentoResponse.cs
+│   │   │       │   └── LancamentosFeatureExtensions.cs
+│   │   │       ├── Migrations/
+│   │   │       │   ├── 20260522154538_InitialCreate.cs
+│   │   │       │   └── 20260523093019_AddIdempotencyKey.cs ← gen_random_uuid()
+│   │   │       └── Repositories/
+│   │   │           └── LancamentosRepository.cs
 │   │   │
-│   │   ├── Endpoints/           ← Minimal APIs (alternativa a Controllers)
-│   │   │   ├── LancamentosEndpoints.cs      ← POST /api/lancamentos
-│   │   │   └── Extensions/
-│   │   │       └── EndpointExtensions.cs
-│   │   │
-│   │   ├── Program.cs           ← Configuração da aplicação
-│   │   └── Lancamentos.API.csproj
+│   │   └── Consolidados/                        ← Módulo Read (CQRS Query side)
+│   │       │
+│   │       ├── FinControl.Consolidado.API/      ← Entrada HTTP (Minimal APIs)
+│   │       │   ├── Configuration/
+│   │       │   │   ├── ApplicationModules.cs
+│   │       │   │   └── BearerSecuritySchemeTransformer.cs
+│   │       │   ├── ModuleExtensions.cs
+│   │       │   └── Program.cs                  ← Vault → Redis → JWT →
+│   │       │                                      SubscriptionKey → Scalar
+│   │       │
+│   │       ├── FinControl.Consolidado.Core/    ← Domínio + Features
+│   │       │   ├── Domain/
+│   │       │   │   ├── Events/
+│   │       │   │   │   └── LancamentoRegistradoHandler.cs  ← Wolverine handler
+│   │       │   │   └── SaldoConsolidado.cs                 ← record(Saldo, UltimaAtualizacao)
+│   │       │   └── Features/
+│   │       │       ├── Commands/
+│   │       │       │   └── AtualizarSaldoConsolidao/
+│   │       │       │       ├── AtualizarSaldoConsolidaoCommand.cs   ← ValorLancamento + DataLancamento
+│   │       │       │       └── AtualizarSaldoConsolidaoCommandHandler.cs ← Lock + Cache
+│   │       │       └── Queries/
+│   │       │           └── GetSaldoConsolidado/
+│   │       │               ├── GetSaldoConsolidadoEndpoint.cs
+│   │       │               ├── GetSaldoConsolidadoQuery.cs
+│   │       │               ├── GetSaldoConsolidadoQueryHandler.cs  ← Redis lookup
+│   │       │               └── GetSaldoConsolidadoResponse.cs
+│   │       │
+│   │       └── FinControl.Consolidado.Worker/  ← BackgroundService consumer
+│   │           ├── LancamentoRegistradoConsumer.cs  ← RabbitMQ.Client direto
+│   │           │                                       Exchange: lancamentos.events
+│   │           │                                       DLX: wolverine-dead-letter-queue
+│   │           │                                       Reconexão exponencial
+│   │           └── Program.cs                  ← Vault → Redis → IConnectionMultiplexer
+│   │                                              → IRedisLockService → Handler
 │   │
-│   ├── Consolidado.API/         (Read Model - Microserviço)
-│   │   ├── Features/            ← Vertical Slicing
-│   │   │   ├── ObterSaldoDiaria/
-│   │   │   │   ├── ObterSaldoDiariaQuery.cs
-│   │   │   │   ├── ObterSaldoDiariaHandler.cs
-│   │   │   │   ├── SaldoResponse.cs
-│   │   │   │   └── ObterSaldoDiariaTests.cs
-│   │   │   ├── ObterExtrato/
-│   │   │   │   ├── ObterExtratoQuery.cs
-│   │   │   │   ├── ObterExtratoHandler.cs
-│   │   │   │   ├── ExtratoResponse.cs
-│   │   │   │   └── ObterExtratoTests.cs
-│   │   │   ├── ObterLancamentoPorPeriodo/
-│   │   │   │   ├── ObterPorPeriodoQuery.cs
-│   │   │   │   ├── ObterPorPeriodoHandler.cs
-│   │   │   │   ├── PeriodoResponse.cs
-│   │   │   │   └── ObterPorPeriodoTests.cs
-│   │   │
-│   │   ├── Shared/              ← Código compartilhado do microserviço
-│   │   │   ├── Domain/
-│   │   │   │   ├── Entities/
-│   │   │   │   │   ├── Consolidado.cs
-│   │   │   │   │   └── ConsolidadoId.cs
-│   │   │   │   └── ValueObjects/
-│   │   │   │       └── Saldo.cs
-│   │   │   ├── Infrastructure/
-│   │   │   │   ├── Data/
-│   │   │   │   │   ├── ConsolidadoDbContext.cs
-│   │   │   │   │   └── Migrations/
-│   │   │   │   ├── Cache/
-│   │   │   │   │   ├── RedisCache.cs
-│   │   │   │   │   └── CachePolicy.cs
-│   │   │   │   ├── Events/
-│   │   │   │   │   └── LancamentoEventConsumer.cs
-│   │   │   │   ├── Persistence/
-│   │   │   │   │   └── ConsolidadoRepository.cs
-│   │   │   │   └── Configuration/
-│   │   │   │       ├── DatabaseConfig.cs
-│   │   │   │       ├── RedisConfig.cs
-│   │   │   │       └── MassTransitConfig.cs
-│   │   │   ├── Behaviors/
-│   │   │   │   ├── CachingBehavior.cs        ← Intercepta queries para cache
-│   │   │   │   ├── LoggingBehavior.cs
-│   │   │   │   └── PerformanceBehavior.cs
-│   │   │   ├── Exceptions/
-│   │   │   └── Extensions/
-│   │   │
-│   │   ├── Endpoints/           ← Minimal APIs
-│   │   │   ├── ConsolidadoEndpoints.cs      ← GET /api/consolidado/saldo/{data}
-│   │   │   └── Extensions/
-│   │   │
-│   │   ├── Program.cs
-│   │   └── Consolidado.API.csproj
+│   └── bulding-blocks/                          ← Infraestrutura compartilhada
+│       │
+│       ├── FinControl.Auth/
+│       │   └── Extensions/
+│       │       └── KeycloakAuthExtensions.cs   ← AddFinControlKeycloakAuth()
+│       │
+│       ├── FinControl.Infrastructure/
+│       │   ├── Cache/
+│       │   │   ├── IRedisLockService.cs        ← Contrato de lock distribuído
+│       │   │   ├── RedisCacheService.cs        ← Wrapper IDistributedCache + camelCase JSON
+│       │   │   └── RedisLockService.cs         ← SETNX + Lua release atômico
+│       │   ├── Data/
+│       │   │   ├── BaseDbContext.cs
+│       │   │   └── IAuditableEntity.cs
+│       │   ├── Extensions/
+│       │   │   ├── HealthChecksExtensions.cs   ← NpgSql + Redis + RabbitMQ
+│       │   │   ├── ObservabilityExtensions.cs  ← OpenTelemetry + prometheus-net
+│       │   │   ├── RedisExtensions.cs          ← IConnectionMultiplexer + IRedisLockService
+│       │   │   ├── SerilogExtensions.cs        ← Serilog + Loki + CorrelationId
+│       │   │   └── WolverineExtensions.cs      ← AddFinControlWolverine()
+│       │   ├── Http/
+│       │   │   ├── CorrelationIdMiddleware.cs
+│       │   │   └── JwtClaimsExtractor.cs
+│       │   ├── Messaging/
+│       │   │   └── RabbitMqPublisher.cs
+│       │   ├── Middleware/
+│       │   │   ├── GlobalExceptionHandler.cs   ← RFC 7807 ProblemDetails
+│       │   │   └── SubscriptionKeyMiddleware.cs ← X-Subscription-Key + timing-safe
+│       │   ├── Vault/
+│       │   │   ├── VaultConfigurationProvider.cs ← KV v2 → IConfiguration
+│       │   │   ├── VaultExtensions.cs            ← AddFinControlVault()
+│       │   │   ├── VaultKeys.cs                  ← Constantes de chaves
+│       │   │   └── VaultOptions.cs
+│       │   └── Wolverine/
+│       │       ├── LoggingMiddleware.cs         ← CorrelationId em todos os handlers
+│       │       └── ValidationMiddleware.cs      ← FluentValidation automático
+│       │
+│       └── FinControl.SharedKernel/
+│           ├── Domain/
+│           │   ├── AggregateRoot.cs
+│           │   ├── DomainEntity.cs             ← Base com Id + igualdade
+│           │   ├── DomainEvent.cs
+│           │   ├── Events/
+│           │   │   └── LancamentoRegistradoMessage.cs ← Contrato do evento
+│           │   ├── IAuditableDomainEntity.cs
+│           │   ├── ISoftDeleteDomainEntity.cs
+│           │   ├── PagedResult.cs
+│           │   └── Result.cs                   ← Result<T> tipado
+│           └── Messaging/
+│               ├── ICommand.cs
+│               ├── IEventHandler.cs
+│               └── IQuery.cs
+│
+├── src/tests/
+│   ├── FinControl.Lancamentos.Tests/
+│   │   ├── Domain/LancamentoTests.cs
+│   │   ├── Fakers/LancamentoCommandFaker.cs
+│   │   └── Features/Commands/
+│   │       ├── RegistrarLancamentoCommandHandlerTests.cs  ← 46 testes
+│   │       └── RegistrarLancamentoCommandValidatorTests.cs
 │   │
-│   └── Shared/                  ← Compartilhado entre microserviços
-│       ├── Domain/
-│       │   ├── Events/
-│       │   │   ├── DomainEvent.cs
-│       │   │   ├── LancamentoRegistradoEvent.cs
-│       │   │   └── LancamentoAtualizadoEvent.cs
-│       │   └── Entities/
-│       │       └── Entity.cs (Base para entidades)
-│       ├── Contracts/           ← Eventos publicados
-│       │   └── Events.cs
-│       ├── Constants/
-│       │   └── AppConstants.cs
-│       └── Shared.csproj
+│   └── FinControl.Consolidado.Tests/
+│       ├── Fakers/SaldoConsolidadoFaker.cs
+│       └── Features/
+│           ├── Commands/AtualizarSaldoConsolidaoCommandHandlerTests.cs ← 14 testes
+│           └── Queries/GetSaldoConsolidadoQueryHandlerTests.cs
 │
-├── tests/
-│   ├── Lancamentos.Tests/
-│   │   ├── Features/            ← Testes por feature (alinhado com src/)
-│   │   │   ├── RegistrarDebito/
-│   │   │   │   ├── RegistrarDebitoHandlerTests.cs
-│   │   │   │   ├── RegistrarDebitoValidatorTests.cs
-│   │   │   │   └── RegistrarDebitoEndpointTests.cs
-│   │   │   ├── RegistrarCredito/
-│   │   │   │   └── RegistrarCreditoHandlerTests.cs
-│   │   │
-│   │   ├── Integration/
-│   │   │   ├── LancamentosApiTests.cs
-│   │   │   └── EventPublishingTests.cs
-│   │   │
-│   │   ├── Fixtures/
-│   │   │   ├── LancamentosDbFixture.cs
-│   │   │   └── TestDataBuilder.cs
-│   │   │
-│   │   └── Lancamentos.Tests.csproj
-│   │
-│   ├── Consolidado.Tests/
-│   │   ├── Features/
-│   │   │   ├── ObterSaldoDiaria/
-│   │   │   │   ├── ObterSaldoDiariaHandlerTests.cs
-│   │   │   │   └── ObterSaldoDiariaEndpointTests.cs
-│   │   │   ├── ObterExtrato/
-│   │   │   │   └── ObterExtratoHandlerTests.cs
-│   │   │
-│   │   ├── Integration/
-│   │   │   ├── ConsolidadoApiTests.cs
-│   │   │   └── CacheTests.cs
-│   │   │
-│   │   ├── Fixtures/
-│   │   │   ├── ConsolidadoDbFixture.cs
-│   │   │   ├── RedisFixture.cs
-│   │   │   └── TestDataBuilder.cs
-│   │   │
-│   │   └── Consolidado.Tests.csproj
-│   │
-│   └── Integration.Tests/
-│       ├── E2E/
-│       │   ├── FluxoCompletoTests.cs         ← Registra débito → Consolida
-│       │   └── EventPublishingE2ETests.cs    ← Testa event-driven
-│       ├── Fixtures/
-│       │   ├── DockerFixture.cs
-│       │   ├── RabbitMQFixture.cs
-│       │   └── DatabaseFixture.cs
-│       └── Integration.Tests.csproj
-│
-├── docker/
-│   ├── docker-compose.yml       ← PostgreSQL, Redis, RabbitMQ, Apps
-│   ├── docker-compose.prod.yml
-│   ├── Dockerfile.lancamentos
-│   └── Dockerfile.consolidado
-│
-├── k8s/
-│   ├── lancamentos-deployment.yaml
-│   ├── consolidado-deployment.yaml
-│   ├── rabbitmq-deployment.yaml
-│   ├── postgresql-statefulset.yaml
-│   └── redis-statefulset.yaml
-│
-├── .github/workflows/
-│   ├── build-test.yml
-│   ├── deploy-staging.yml
-│   └── deploy-production.yml
-│
-├── .gitignore
+├── docker-compose.yml           ← PostgreSQL, Redis, RabbitMQ, Vault, Keycloak, Kong
 ├── README.md
-├── ARQUITETURA.md               (Este arquivo)
-└── TesteBancoCarrefour.sln
+└── FinControl.sln
 ```
 
 ---
@@ -2251,129 +2278,156 @@ public class LoggingInterceptor
 
 ## Componentes Principais
 
-### 1. Lancamentos Service
+### 1. Lancamentos Service (`FinControl.Lancamentos.API` + `FinControl.Lancamentos.Core`)
 
 **Responsabilidades:**
-- ✅ Registrar novos lançamentos (débitos/créditos)
-- ✅ Validar dados de entrada
-- ✅ Persistir em banco de dados
-- ✅ Publicar evento `LançamentoRegistrado`
-- ✅ Manter independência funcional
+- ✅ Registrar novos lançamentos (débitos e créditos)
+- ✅ Validar tipo, valor, data e modalidade via FluentValidation
+- ✅ Verificar idempotência antes de persistir (IdempotencyKey único)
+- ✅ Persistir em PostgreSQL via EF Core (ACID)
+- ✅ Publicar evento `LancamentoRegistradoMessage` via Wolverine Outbox
+- ✅ Manter independência funcional — não conhece o Consolidado
 
-**Endpoints:**
+**Endpoints implementados:**
 ```
-POST /api/lancamentos
-  Request: { tipo: "D|C", valor: 100.00, descricao: "..." }
-  Response: { id, timestamp, status: "Registrado" }
+Headers obrigatórios (todas as rotas):
+  Authorization: Bearer <token Keycloak>
+  X-Subscription-Key: <chave configurada no Vault/Kong>
 
-GET /api/lancamentos
-  Query: ?dataInicio=&dataFim=&tipo=D&pageNumber=1&pageSize=10
-  Response: List<LancamentoDto>
-```
-
-**Database Schema:**
-```sql
-CREATE TABLE Lancamentos (
-  Id UUID PRIMARY KEY,
-  Tipo CHAR(1) CHECK (Tipo IN ('D', 'C')),
-  Valor DECIMAL(18,2),
-  Descricao VARCHAR(500),
-  DataRegistro TIMESTAMP DEFAULT NOW(),
-  Ativo BOOLEAN DEFAULT TRUE,
-  CreatedAt TIMESTAMP,
-  UpdatedAt TIMESTAMP
-);
-
-CREATE INDEX idx_lancamento_data ON Lancamentos(DataRegistro);
-```
-
----
-
-### 2. Consolidado Service
-
-**Responsabilidades:**
-- ✅ Consumir eventos de lançamentos
-- ✅ Calcular saldo consolidado por dia
-- ✅ Armazenar em cache (Redis)
-- ✅ Servir consultas rápidas (<50ms)
-- ✅ Eventual consistency
-
-**Endpoints:**
-```
-GET /api/consolidado/{data}
-  Param: data=2026-05-20
-  Response: {
-    data: "2026-05-20",
-    saldoAnterior: 5000.00,
-    debitos: 2000.00,
-    creditos: 3500.00,
-    saldoAtual: 6500.00,
-    dataConsultoria: "2026-05-20T15:30:45.000Z"
+POST /lancamentos
+  Body: {
+    "tipo": "Credito" | "Debito",
+    "modalidade": "Venda" | "Devolucao" | "Suprimento" | "Sangria" |
+                  "PagamentoFornecedor" | "RecebimentoDivida" | "Outros",
+    "valor": 15000,              ← em centavos (long)
+    "dataLancamento": "2026-05-23T10:00:00Z",
+    "descricao": "string",       ← obrigatório se modalidade = Outros
+    "idempotencyKey": "uuid-v4"  ← cliente gera; retorna 409 se já existir
   }
+  Response 201: {
+    "id": 1,
+    "navigationId": "uuid",
+    "tipo": "Credito",
+    "tipoFormatado": "Crédito",
+    "modalidade": "Venda",
+    "valor": 15000,
+    "dataLancamento": "2026-05-23T10:00:00Z",
+    "criadoEm": "2026-05-23T10:00:05Z"
+  }
+  Response 409: já processado (idempotência)
+  Response 400: validação falhou (ProblemDetails RFC 7807)
+  Response 401: token ausente/inválido
+  Response 403: subscription-key inválida
 
-GET /api/consolidado/periodo
-  Query: ?dataInicio=2026-05-01&dataFim=2026-05-20
-  Response: List<ConsolidadoDiaDto>
+GET /lancamentos
+  Query: ?pageNumber=1&pageSize=20
+  Response 200: { items: [...], totalCount, pageNumber, pageSize }
 ```
 
-**Cache Strategy:**
-```
-Key: saldo:{data}
-Value: {
-  saldoAnterior, debitos, creditos, saldoAtual
-}
-TTL: 60 segundos (1 minuto)
-```
-
-**Database Schema:**
+**Schema PostgreSQL (schema: lancamentos):**
 ```sql
-CREATE TABLE Consolidados (
-  Id UUID PRIMARY KEY,
-  Data DATE,
-  SaldoAnterior DECIMAL(18,2),
-  Debitos DECIMAL(18,2),
-  Creditos DECIMAL(18,2),
-  SaldoAtual DECIMAL(18,2),
-  TotalLancamentos INT,
-  UltimaAtualizacao TIMESTAMP,
-  UNIQUE(Data)
+CREATE TABLE lancamentos.lancamentos (
+  id                BIGSERIAL PRIMARY KEY,
+  navigation_id     UUID NOT NULL DEFAULT gen_random_uuid(),
+  idempotency_key   UUID NOT NULL,
+  tipo              INTEGER NOT NULL,      -- enum TipoLancamento
+  modalidade        INTEGER NOT NULL,      -- enum ModalidadeLancamento
+  valor             BIGINT NOT NULL,       -- centavos
+  data_lancamento   TIMESTAMPTZ NOT NULL,
+  descricao         VARCHAR(300),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ,
+  deleted_at        TIMESTAMPTZ            -- soft-delete (global query filter)
 );
 
-CREATE INDEX idx_consolidado_data ON Consolidados(Data);
+CREATE UNIQUE INDEX idx_lancamento_idempotency_key
+  ON lancamentos.lancamentos (idempotency_key);
+CREATE INDEX idx_lancamento_data
+  ON lancamentos.lancamentos (data_lancamento DESC);
 ```
 
 ---
 
-### 3. Event Bus (Message Broker)
+### 2. Consolidado Service — duas camadas
 
-**Eventos Publicados:**
-```csharp
-public class LançamentoRegistradoEvent
-{
-  public Guid Id { get; set; }
-  public DateTime Timestamp { get; set; }
-  public decimal Valor { get; set; }
-  public string Tipo { get; set; } // "D" ou "C"
-  public DateTime DataOperacao { get; set; }
-}
+#### 2a. `FinControl.Consolidado.API` (leitura)
+
+**Responsabilidades:**
+- ✅ Servir saldo consolidado por data via Redis (<5ms hit)
+- ✅ Autenticado com Keycloak + SubscriptionKeyMiddleware
+
+**Endpoint implementado:**
+```
+GET /consolidado/saldo/{data}
+  Param: data = yyyy-MM-dd (ex: 2026-05-23)
+  Response 200: {
+    "data": "2026-05-23",
+    "saldo": 125000,           ← em centavos (long)
+    "ultimaAtualizacao": "2026-05-23T10:15:30Z"
+  }
+  Response 404: sem saldo para a data (cache vazio + nenhum lançamento)
+  Response 401/403: autenticação/subscription-key
 ```
 
-**Subscribers:**
-- Consolidado.API (atualiza saldo)
-- Audit Service (registra histórico)
-- Notification Service (envia alertas)
+#### 2b. `FinControl.Consolidado.Worker` (consumidor de eventos)
 
-**Configuração (MassTransit):**
+**Responsabilidades:**
+- ✅ Consumir `LancamentoRegistradoMessage` do RabbitMQ
+- ✅ Adquirir lock distribuído por data (`lock:saldo:consolidado:{data}`)
+- ✅ Ler saldo atual do Redis, somar o valor do lançamento e persistir
+- ✅ ACK/NACK com requeue em caso de falha; NACK sem requeue para mensagem inválida
+
+**Fluxo de atualização:**
+```
+RabbitMQ → LancamentoRegistradoConsumer
+  → AtualizarSaldoConsolidadoCommandHandler
+    → IRedisLockService.ExecuteWithLockAsync("lock:saldo:consolidado:yyyy-MM-dd")
+      → RedisCacheService.GetAsync<SaldoConsolidado>("saldo:consolidado:yyyy-MM-dd")
+      → novoSaldo = saldoAtual + ValorLancamento
+      → RedisCacheService.SetAsync(key, novoSaldo, TTL=30 dias)
+    → ACK para RabbitMQ
+```
+
+**Cache:**
+```
+Chave:  saldo:consolidado:{yyyy-MM-dd}          (prefixo FinControl: no Redis)
+Valor:  { "saldo": 125000, "ultimaAtualizacao": "..." }
+TTL:    30 dias (renovado a cada atualização)
+Lock:   lock:saldo:consolidado:{yyyy-MM-dd}     (5 tentativas × 100ms, expiry 10s)
+```
+
+> Não existe banco de dados de consolidação — o Redis é a única fonte de leitura.
+> Consistência eventual garantida pelo Outbox Pattern do Wolverine.
+
+---
+
+### 3. Event Bus (RabbitMQ + Wolverine Outbox)
+
+**Evento publicado:**
 ```csharp
-services.AddMassTransit(x =>
-{
-  x.AddConsumer<LancamentoEventConsumer>();
-  x.UsingRabbitMq((context, cfg) =>
-  {
-    cfg.Host(new Uri("rabbitmq://rabbitmq-service"));
-    cfg.ConfigureEndpoints(context);
-  });
-});
+// FinControl.SharedKernel/Domain/Events/LancamentoRegistradoMessage.cs
+public record LancamentoRegistradoMessage(
+    Guid Id,
+    long Valor,
+    DateTimeOffset DataLancamento,
+    string Tipo,
+    string Modalidade);
+```
+
+**Topologia RabbitMQ:**
+```
+Exchange: lancamentos.events   (topic, durable)
+  └── Binding: lancamento.criado
+       └── Queue: fincontrol.consolidado.lancamento-registrado (durable)
+                  x-dead-letter-exchange: wolverine-dead-letter-queue
+```
+
+**Pipeline Wolverine (Lancamentos):**
+```csharp
+// Outbox — publicação na mesma transação PostgreSQL
+opts.UseRabbitMq(...)
+    .UseDurableOutbox()
+    .AutoProvision();
 ```
 
 ---
@@ -2564,56 +2618,68 @@ Implementação:
 
 ### 1. Autenticação
 
+Keycloak como Identity Provider. Configurado via `AddFinControlKeycloakAuth()` (building block `FinControl.Auth`):
+
 ```csharp
-// JWT Bearer Token
-services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-  .AddJwtBearer(options =>
-  {
-    options.Authority = "https://seu-idp.com";
-    options.Audience = "fluxocaixa-api";
-    options.TokenValidationParameters = new()
+// FinControl.Auth/Extensions/KeycloakAuthExtensions.cs
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
     {
-      ValidateIssuer = true,
-      ValidateAudience = true,
-      ValidateLifetime = true
-    };
-  });
+        options.Authority   = configuration["Keycloak:Authority"];
+        options.Audience    = configuration["Keycloak:Audience"];
+        options.RequireHttpsMetadata = !env.IsDevelopment();
+    });
 ```
 
 ### 2. Autorização
 
 ```csharp
-[Authorize(Policy = "AdminOnly")]
-[HttpPost("api/lancamentos")]
-public async Task<IActionResult> RegistrarLancamento(...)
-
-// Definição de Policy
-services.AddAuthorizationBuilder()
-  .AddPolicy("AdminOnly", policy =>
-    policy.RequireRole("Admin", "Contador"));
+// Endpoints protegidos com .RequireAuthorization()
+app.MapPost("/lancamentos", handler).RequireAuthorization();
+app.MapGet("/lancamentos",  handler).RequireAuthorization();
+app.MapGet("/consolidado/saldo/{data}", handler).RequireAuthorization();
 ```
 
-### 3. Validação de Entrada
+### 3. SubscriptionKeyMiddleware (segunda camada após Kong) — implementado
 
 ```csharp
-public class RegistrarLancamentoValidator : AbstractValidator<RegistrarLancamentoRequest>
-{
-  public RegistrarLancamentoValidator()
-  {
-    RuleFor(x => x.Tipo)
-      .Must(t => t == "D" || t == "C")
-      .WithMessage("Tipo deve ser 'D' (débito) ou 'C' (crédito)");
+// FinControl.Infrastructure/Middleware/SubscriptionKeyMiddleware.cs
+// Registro no pipeline (antes da autenticação):
+app.UseSubscriptionKeyValidation(VaultKeys.KongLancamentosSubscriptionKey);
 
-    RuleFor(x => x.Valor)
-      .GreaterThan(0)
-      .WithMessage("Valor deve ser maior que zero");
+// Comportamento:
+// - Bypassa /health e /health/ready
+// - Lê X-Subscription-Key do header
+// - Compara com IConfiguration[configKey] usando CryptographicOperations.FixedTimeEquals
+// - Se Vault não retornou a chave (dev/offline): bypassa silenciosamente
+// - Se chave inválida: retorna 401 ProblemDetails com correlationId
+```
 
-    RuleFor(x => x.Descricao)
-      .NotEmpty()
-      .MaximumLength(500)
-      .WithMessage("Descrição não pode estar vazia ou exceder 500 caracteres");
-  }
-}
+**Por que duas camadas?**
+
+Kong valida a chave na borda. O middleware valida dentro do serviço, cobrindo requisições que chegam diretamente à API (acesso interno, bypasses de rede, testes de integração).
+
+### 4. Validação de Entrada (implementado)
+
+```csharp
+// RegistrarLancamentoCommandValidator.cs
+RuleFor(x => x.Tipo).IsInEnum();
+RuleFor(x => x.Modalidade).IsInEnum();
+RuleFor(x => x.Valor).GreaterThan(0).LessThanOrEqualTo(1_000_000_000);
+
+// Avaliado em runtime (não capturado no construtor)
+RuleFor(x => x.DataLancamento)
+    .Must(d => d <= DateTimeOffset.UtcNow.AddDays(1))
+    .WithMessage("Data nao pode ser no futuro (maximo 1 dia a frente).")
+    .Must(d => d >= DateTimeOffset.UtcNow.AddYears(-1))
+    .When(x => x.DataLancamento != default)
+    .WithMessage("Data nao pode ser anterior a 1 ano.");
+
+// Descricao obrigatória somente para modalidade Outros
+RuleFor(x => x.Descricao)
+    .NotEmpty()
+    .When(x => x.Modalidade == ModalidadeLancamento.Outros);
 ```
 
 ### 4. Criptografia em Trânsito
@@ -2960,41 +3026,53 @@ vault kv put secret/kong \
   admin_api_key="kong-super-secret-key"
 ```
 
-**ASP.NET Core - Integração com Vault:**
+**Implementação real — `AddFinControlVault()` (building block):**
 
 ```csharp
-// Program.cs
-var builder = WebApplication.CreateBuilder(args);
+// Program.cs (Lancamentos.API e Consolidado.API)
+try
+{
+    builder.AddFinControlVault();  // carrega vault.settings.json + preenche IConfiguration
+}
+catch (Exception ex) when (builder.Environment.IsDevelopment())
+{
+    Console.WriteLine($"Vault nao disponivel em desenvolvimento: {ex.Message}");
+}
 
-// Adicionar Vault como Secret Store
-builder.Configuration
-    .AddJsonFile("appsettings.json")
-    .AddEnvironmentVariables()
-    .AddVault(vaultOptions =>
-    {
-        vaultOptions.VaultUrl = "http://localhost:8200";
-        vaultOptions.SecretPath = "secret/data";
-        vaultOptions.AuthMethod = AuthMethod.Token;
-        vaultOptions.AuthToken = "myroot";
-    });
+// VaultExtensions.AddFinControlVault():
+// 1. Carrega vault.settings.json e vault.settings.{Env}.json
+// 2. Lê VaultOptions (url, token, secretPaths)
+// 3. Adiciona VaultConfigurationProvider ao pipeline de IConfiguration
+// 4. Cada chave Vault (ex: dev/postgres:connection_string) vira
+//    IConfiguration["dev/postgres:connection_string"]
+```
 
-// Usar secrets
-services.AddSqlServer(builder.Configuration["db:connection_string"]);
-services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.TokenValidationParameters.IssuerSigningKey = 
-            new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["jwt:signing_key"]));
-    });
+**Chaves de Vault utilizadas (`VaultKeys.cs`):**
+```csharp
+public static class VaultKeys
+{
+    public const string PostgresConnection            = "dev/postgres:connection_string";
+    public const string RedisConnection               = "dev/redis:connection_string";
+    public const string RabbitMqUri                   = "dev/rabbitmq:uri";
+    public const string KongLancamentosSubscriptionKey = "dev/kong:lancamentos_subscription_key";
+    public const string KongConsolidadosSubscriptionKey = "dev/kong:consolidados_subscription_key";
+}
+```
 
-var app = builder.Build();
-app.Run();
+**Configuração em desenvolvimento (`vault.settings.Development.json`):**
+```json
+{
+  "Vault": {
+    "Address": "http://localhost:8200",
+    "Token": "fincontrol_dev_token_12345",
+    "SecretPaths": ["dev/postgres", "dev/redis", "dev/rabbitmq", "dev/kong"]
+  }
+}
 ```
 
 **NuGet Package:**
 ```xml
-<PackageReference Include="VaultSharp" Version="1.13.0.0" />
+<PackageReference Include="VaultSharp" />
 ```
 
 ### Opção 2: Azure Key Vault (SE FOR AZURE)
@@ -3725,6 +3803,6 @@ Suporta 50 req/s?        ⚠️  Com esforço      ✅ Nativo
 
 ---
 
-**Versão:** 1.1  
+**Versão:** 2.0  
 **Última atualização:** Maio 2026  
-**Status:** ✅ Planejamento Arquitetural Completo + Wolverine Framework Integrado
+**Status:** ✅ Implementação em produção — 60 testes passando, zero falhas
