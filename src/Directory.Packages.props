@@ -63,6 +63,8 @@
     <PackageVersion Include="VaultSharp" Version="1.17.5.1" />
     <!-- ===== WORKER / HOSTING ===== -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
+    <!-- ===== STRESS TESTING ===== -->
+    <PackageVersion Include="NBomber" Version="5.5.0" />
     <!-- ===== TESTING ===== -->
     <PackageVersion Include="X.PagedList" Version="10.5.9" />
     <PackageVersion Include="xunit" Version="2.9.3" />

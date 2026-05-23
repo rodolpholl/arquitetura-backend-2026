@@ -459,6 +459,10 @@ certs/
 docker-compose.override.yml
 docker-compose.local.yml
 
-# HashiCorp Vault - arquivos de desenvolvimento local (contêm tokens)
+# HashiCorp Vault - arquivos de desenvolvimento local (contï¿½m tokens)
 vault.settings.Development.json
 **/vault.settings.Development.json
+
+# Stress test reports (gerados localmente, nÃ£o versionados)
+stress-reports/
+**/stress-reports/

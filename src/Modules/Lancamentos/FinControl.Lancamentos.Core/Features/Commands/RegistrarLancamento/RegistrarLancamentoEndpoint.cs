@@ -29,10 +29,9 @@ public record RegistrarLancamentoRequest(
 
     /// <summary>
     /// Data do lançamento (opcional, usa UTC now se omitida).
-    /// Aceita formatos: "2024-05-22", "2024-05-22T10:30:00", "2024-05-22T10:30:00Z".
-    /// Valores sem timezone são interpretados como UTC.
+    /// Aceita formatos: "2024-05-22T10:30:00Z", "2024-05-22T10:30:00+00:00", "2024-05-22T10:30:00-03:00".
     /// </summary>
-    DateTime? DataLancamento = null
+    DateTimeOffset? DataLancamento = null
 );
 
 /// <summary>
@@ -72,9 +71,7 @@ public class RegistrarLancamentoEndpoint
             Modalidade = request.Modalidade,
             Valor = request.Valor,
             Descricao = request.Descricao,
-            DataLancamento = request.DataLancamento.HasValue
-                ? new DateTimeOffset(request.DataLancamento.Value, TimeSpan.Zero)
-                : DateTimeOffset.UtcNow,
+            DataLancamento = request.DataLancamento?.ToUniversalTime() ?? DateTimeOffset.UtcNow,
             UsuarioId = usuarioId,
             UsuarioNome = usuarioNome,
             UsuarioEmail = usuarioEmail,
