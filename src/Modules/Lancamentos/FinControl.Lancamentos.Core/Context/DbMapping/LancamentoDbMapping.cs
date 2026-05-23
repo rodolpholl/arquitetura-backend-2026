@@ -51,6 +51,15 @@ public class LancamentoDbMapping : IEntityTypeConfiguration<Lancamento>
             .IsRequired()
             .HasColumnName("data_lancamento");
 
+        // Idempotency key — índice único garante que retransmissões não criem duplicatas
+        builder.Property(l => l.IdempotencyKey)
+            .IsRequired()
+            .HasColumnName("idempotency_key");
+
+        builder.HasIndex(l => l.IdempotencyKey)
+            .IsUnique()
+            .HasDatabaseName("idx_lancamento_idempotency_key");
+
         // Computed properties - not mapped
         builder.Ignore(l => l.ValorFormatado);
         builder.Ignore(l => l.Tipo);

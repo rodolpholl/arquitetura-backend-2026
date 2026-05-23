@@ -2,6 +2,7 @@ using FinControl.Consolidado.Core.Features.Commands.AtualizarSaldoConsolidao;
 using FinControl.Consolidado.Worker;
 using FinControl.Infrastructure.Cache;
 using FinControl.Infrastructure.Vault;
+using StackExchange.Redis;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -32,8 +33,11 @@ if (!string.IsNullOrEmpty(redisConnection))
         options.Configuration = redisConnection;
         options.InstanceName = "FinControl:";
     });
+    builder.Services.AddSingleton<IConnectionMultiplexer>(
+        _ => ConnectionMultiplexer.Connect(redisConnection));
     builder.Services.AddSingleton<RedisCacheService>();
-    builder.Services.AddScoped<AtualizarSaldoConsolidaoCommandHandler>();
+    builder.Services.AddSingleton<IRedisLockService, RedisLockService>();
+    builder.Services.AddScoped<AtualizarSaldoConsolidadoCommandHandler>();
 }
 else if (!builder.Environment.IsDevelopment())
 {

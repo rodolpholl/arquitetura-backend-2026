@@ -111,17 +111,17 @@ public sealed class LancamentoRegistradoConsumer(
         try
         {
             await using var scope = scopeFactory.CreateAsyncScope();
-            var handler = scope.ServiceProvider.GetService<AtualizarSaldoConsolidaoCommandHandler>();
+            var handler = scope.ServiceProvider.GetService<AtualizarSaldoConsolidadoCommandHandler>();
             if (handler is null)
             {
                 logger.LogWarning(
-                    "AtualizarSaldoConsolidaoCommandHandler não registrado (Redis indisponível). Descartando mensagem Id={Id}.",
+                    "AtualizarSaldoConsolidadoCommandHandler nao registrado (Redis indisponivel). Descartando mensagem Id={Id}.",
                     message.Id);
                 await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
                 return;
             }
 
-            await handler.Handle(new AtualizarSaldoConsolidaoCommand(message.Valor), ct);
+            await handler.Handle(new AtualizarSaldoConsolidadoCommand(message.Valor, message.DataLancamento), ct);
             await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
         }
         catch (Exception ex)

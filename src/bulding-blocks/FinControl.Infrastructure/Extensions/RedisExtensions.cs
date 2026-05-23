@@ -34,7 +34,12 @@ public static class RedisExtensions
             options.InstanceName = "FinControl:";
         });
 
+        // IConnectionMultiplexer compartilhado: usado por RedisCacheService e IRedisLockService
+        builder.Services.AddSingleton<IConnectionMultiplexer>(
+            _ => ConnectionMultiplexer.Connect(connectionString));
+
         builder.Services.AddSingleton<RedisCacheService>();
+        builder.Services.AddSingleton<IRedisLockService, RedisLockService>();
 
         return builder;
     }

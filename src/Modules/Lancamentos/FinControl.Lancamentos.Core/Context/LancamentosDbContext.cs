@@ -108,6 +108,10 @@ public class LancamentosDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(LancamentosDbContext).Assembly);
+
+        // Filtro global: exclui automaticamente registros com soft-delete de todas as queries
+        modelBuilder.Entity<Lancamento>()
+            .HasQueryFilter(e => e.DeletedAt == null);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

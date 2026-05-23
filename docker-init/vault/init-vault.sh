@@ -209,6 +209,15 @@ main() {
         "dev_admin_password=Admin@123456!"
     echo ""
 
+    # Kong — subscription keys para autenticação no API Gateway
+    # Cada API tem sua própria key para controle e rastreamento granular.
+    # Header esperado pelo Kong: X-Subscription-Key
+    echo -e "${CYAN}🔑 Kong${NC}"
+    create_secret "kong" \
+        "lancamentos_subscription_key=fc-lanc-dev-subkey-2026-abc123ef" \
+        "consolidados_subscription_key=fc-cons-dev-subkey-2026-xyz789ab"
+    echo ""
+
     # Vault (metadados / AppRole para produção)
     echo -e "${CYAN}🔑 Vault${NC}"
     create_secret "vault" \
@@ -218,7 +227,7 @@ main() {
     # Verificar Secrets Criados
     print_header "Verificando Secrets Criados"
     
-    for secret in postgres redis rabbitmq grafana keycloak vault; do
+    for secret in postgres redis rabbitmq grafana keycloak kong vault; do
         echo -e "${CYAN}📋 Lendo: secret/${VAULT_ENV}/${secret}${NC}"
         
         response=$(read_secret "$secret")

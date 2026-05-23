@@ -45,16 +45,15 @@ public class RegistrarLancamentoCommandValidator : AbstractValidator<RegistrarLa
             .When(x => !string.IsNullOrWhiteSpace(x.Descricao))
             .WithMessage("Descrição não pode exceder 500 caracteres.");
 
-        // Data do Lançamento
+        // Data do Lançamento — avaliadas em runtime (não capturadas no construtor)
         RuleFor(x => x.DataLancamento)
-            .LessThanOrEqualTo(DateTimeOffset.UtcNow.AddDays(1))
+            .Must(d => d <= DateTimeOffset.UtcNow.AddDays(1))
             .WithMessage("Data do lançamento não pode ser no futuro (máximo 1 dia a frente).");
 
         RuleFor(x => x.DataLancamento)
-            .GreaterThanOrEqualTo(DateTimeOffset.UtcNow.AddYears(-1))
-            .WithMessage("Data do lançamento não pode ser anterior a 1 ano.")
+            .Must(d => d >= DateTimeOffset.UtcNow.AddYears(-1))
             .When(x => x.DataLancamento != default)
-            .WithMessage("Data do lançamento é obrigatória.");
+            .WithMessage("Data do lançamento não pode ser anterior a 1 ano.");
 
         // UsuarioId
         RuleFor(x => x.UsuarioId)

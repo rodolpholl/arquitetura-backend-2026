@@ -60,6 +60,16 @@ public static class VaultExtensions
     public static WebApplicationBuilder AddFinControlVault(
         this WebApplicationBuilder builder)
     {
+        // Carrega vault.settings.json e vault.settings.{Environment}.json ANTES de ler as
+        // opções. Esses arquivos definem SecretPaths, Address e AuthMethod sem expor secrets.
+        // O arquivo específico do ambiente sobrescreve apenas os campos que diferem.
+        builder.Configuration
+            .AddJsonFile("vault.settings.json", optional: true, reloadOnChange: false)
+            .AddJsonFile(
+                $"vault.settings.{builder.Environment.EnvironmentName}.json",
+                optional: true,
+                reloadOnChange: false);
+
         var vaultOptions = builder.Configuration
             .GetSection(VaultOptions.SectionName)
             .Get<VaultOptions>() ?? new VaultOptions();

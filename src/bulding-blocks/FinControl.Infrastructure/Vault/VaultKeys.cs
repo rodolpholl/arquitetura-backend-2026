@@ -169,5 +169,26 @@ public static class VaultKeys
     /// IConfiguration: <c>keycloak:api_client_secret</c>
     /// </summary>
     public const string KeycloakApiClientSecret = "keycloak:api_client_secret";
+
+    // ── dev/kong ─────────────────────────────────────────────────────────────
+    // Subscription keys usadas pelo Kong key-auth plugin.
+    // Enviadas pelos clientes no header: X-Subscription-Key
+    // Lidas pelo kong-init.sh para provisionar consumers + credentials no Kong.
+
+    /// <summary>
+    /// Subscription key do Kong para a API de Lançamentos.
+    /// Vault path: <c>dev/kong</c> → key <c>lancamentos_subscription_key</c>
+    /// IConfiguration: <c>kong:lancamentos_subscription_key</c>
+    /// Header HTTP: <c>X-Subscription-Key</c>
+    /// </summary>
+    public const string KongLancamentosSubscriptionKey = "kong:lancamentos_subscription_key";
+
+    /// <summary>
+    /// Subscription key do Kong para a API de Consolidados.
+    /// Vault path: <c>dev/kong</c> → key <c>consolidados_subscription_key</c>
+    /// IConfiguration: <c>kong:consolidados_subscription_key</c>
+    /// Header HTTP: <c>X-Subscription-Key</c>
+    /// </summary>
+    public const string KongConsolidadosSubscriptionKey = "kong:consolidados_subscription_key";
 }
 

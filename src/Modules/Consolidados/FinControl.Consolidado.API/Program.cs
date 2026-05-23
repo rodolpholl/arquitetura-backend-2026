@@ -104,7 +104,10 @@ catch
 // 4. Exception Handler Global (RFC 7807 ProblemDetails)
 app.UseExceptionHandler();
 
-// 5. Autenticação e Autorização
+// 5. Subscription Key (segunda camada após Kong — cobre requisições que bypassam o gateway)
+app.UseSubscriptionKeyValidation(VaultKeys.KongConsolidadosSubscriptionKey);
+
+// 6. Autenticação e Autorização
 app.UseAuthentication();
 app.UseAuthorization();
 

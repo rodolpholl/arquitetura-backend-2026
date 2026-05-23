@@ -1,9 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-using System.Linq;
-using System.Reflection;
-using System.Threading.Tasks;
 using FinControl.Lancamentos.Core.Domain.Enums;
 using FinControl.SharedKernel.Domain;
 
@@ -14,12 +8,25 @@ public class Lancamento : DomainEntity<long>, IAuditableDomainEntity, ISoftDelet
     public ModalidadeLancamento Modalidade { get; set; }
     public long Valor { get; set; }
     public decimal ValorFormatado => Valor / 100m;
+
     public TipoLancamento Tipo => Valor < 0 ? TipoLancamento.Debito : TipoLancamento.Credito;
-    public string? TipoFormatado => Tipo.GetType()
-        .GetField(Tipo.ToString())
-        ?.GetCustomAttribute<DisplayAttribute>()?.Name ?? Tipo.ToString();
+
+    // Switch expression elimina reflection em cada acesso
+    public string TipoFormatado => Tipo switch
+    {
+        TipoLancamento.Credito => "Crédito",
+        TipoLancamento.Debito  => "Débito",
+        _                      => Tipo.ToString()
+    };
+
     public string? Descricao { get; set; } = string.Empty;
     public DateTimeOffset DataLancamento { get; set; }
+
+    /// <summary>
+    /// Chave de idempotência enviada pelo cliente via X-Idempotency-Key.
+    /// Garante que retransmissões RabbitMQ não criem lançamentos duplicados.
+    /// </summary>
+    public Guid IdempotencyKey { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? UpdatedAt { get; set; }
@@ -31,5 +38,4 @@ public class Lancamento : DomainEntity<long>, IAuditableDomainEntity, ISoftDelet
     public string? UpdatedByEmail { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
     public string? DeletedBy { get; set; }
-
 }

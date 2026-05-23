@@ -7,5 +7,5 @@ namespace FinControl.Consolidado.Core.Domain.Events;
 public class LancamentoRegistradoHandler(IMessageBus bus)
 {
     public Task Handle(LancamentoRegistradoMessage message, CancellationToken ct)
-        => bus.InvokeAsync(new AtualizarSaldoConsolidaoCommand(message.Valor), ct);
+        => bus.InvokeAsync(new AtualizarSaldoConsolidadoCommand(message.Valor, message.DataLancamento), ct);
 }

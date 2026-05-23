@@ -2,6 +2,7 @@ using FinControl.Infrastructure.Messaging;
 using FinControl.Lancamentos.Core.Context;
 using FinControl.Lancamentos.Core.Domain;
 using FinControl.SharedKernel.Domain.Events;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace FinControl.Lancamentos.Core.Features.Commands.RegistrarLancamento;
@@ -28,6 +29,7 @@ public class RegistrarLancamentoCommandHandler(
             Valor = command.Valor,
             Descricao = command.Descricao,
             DataLancamento = command.DataLancamento == default ? DateTimeOffset.UtcNow : command.DataLancamento,
+            IdempotencyKey = command.IdempotencyKey,
             CreatedAt = DateTimeOffset.UtcNow,
             CreatedBy = command.UsuarioId,
             CreatedByName = command.UsuarioNome,
@@ -50,15 +52,12 @@ public class RegistrarLancamentoCommandHandler(
         return MapearParaResponse(lancamento);
     }
 
-    private static Task<Lancamento?> VerificarIdempotenciaAsync(
+    private Task<Lancamento?> VerificarIdempotenciaAsync(
         Guid idempotencyKey,
-        CancellationToken cancellationToken)
-    {
-        // TODO: implementar busca por IdempotencyKey quando o campo for adicionado à entidade
-        _ = idempotencyKey;
-        _ = cancellationToken;
-        return Task.FromResult<Lancamento?>(null);
-    }
+        CancellationToken cancellationToken) =>
+        db.Lancamentos
+            .AsNoTracking()
+            .FirstOrDefaultAsync(l => l.IdempotencyKey == idempotencyKey, cancellationToken);
 
     private static RegistrarLancamentoResponse MapearParaResponse(Lancamento lancamento) =>
         new(
