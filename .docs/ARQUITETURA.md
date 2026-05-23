@@ -37,6 +37,7 @@
 | **Grafana Dashboard** | ✅ Provisionado | Dashboard HTTP provisionado via JSON (`fincontrol-http-v1`) |
 | **Prometheus /metrics** | ✅ Funcional | `prometheus-net` expõe métricas em `/metrics` (ambas as APIs) |
 | **Testes automatizados** | ✅ 64 testes | 48 (Lancamentos) + 16 (Consolidado), zero falhas |
+| **FinControl.StressTests** | ✅ Implementado | NBomber 5.5.0 — 50 req/s (Consolidado) + 10 req/s (Lancamentos) em paralelo; JWT auto-fetch do Keycloak; relatórios HTML + Markdown |
 
 ### O que está em aberto (roadmap)
 
@@ -1611,7 +1612,12 @@ Requisição GET /saldo/2026-05-20
 │  ├─ xUnit (framework de testes)
 │  ├─ Moq (mocking — IDistributedCache, IRedisLockService)
 │  ├─ FluentAssertions (asserts legíveis)
-│  └─ Bogus (geradores de dados — Faker<T>)
+│  ├─ Bogus (geradores de dados — Faker<T>)
+│  └─ NBomber 5.5.0 (stress test manual — execução via `dotnet run`)
+│     ├─ ConsolidadosScenario: ramp 20s → 50 req/s sustained → ramp-down 10s
+│     ├─ LancamentosScenario:  ramp 20s → 10 req/s sustained → ramp-down 10s
+│     ├─ Thresholds: Consolidado p95 < 500ms | Lançamentos p95 < 1000ms | erro < 5%
+│     └─ Relatórios HTML + Markdown em stress-reports/ (não versionado)
 │
 └─ Observability
    ├─ OpenTelemetry (traces + métricas HTTP, EF Core, HTTP client)
@@ -1696,10 +1702,14 @@ CI/CD:               GitHub Actions
 <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
 <PackageReference Include="Scalar.AspNetCore" />
 
-<!-- Testes -->
+<!-- Testes unitários -->
 <PackageReference Include="xunit" />
 <PackageReference Include="Moq" />
 <PackageReference Include="FluentAssertions" />
+<PackageReference Include="Bogus" />
+
+<!-- Stress test (FinControl.StressTests — execução manual) -->
+<PackageReference Include="NBomber" Version="5.5.0" />
 <PackageReference Include="Bogus" />
 ```
 
@@ -1947,11 +1957,23 @@ arquitetura-backend-2026/
 │   │       ├── RegistrarLancamentoCommandHandlerTests.cs   (12 testes)
 │   │       └── RegistrarLancamentoCommandValidatorTests.cs (27 testes)
 │   │
-│   └── FinControl.Consolidado.Tests/          ← 16 testes
-│       ├── Fakers/SaldoConsolidadoFaker.cs
-│       └── Features/
-│           ├── Commands/AtualizarSaldoConsolidaoCommandHandlerTests.cs (9 testes)
-│           └── Queries/GetSaldoConsolidadoQueryHandlerTests.cs         (7 testes)
+│   ├── FinControl.Consolidado.Tests/          ← 16 testes
+│   │   ├── Fakers/SaldoConsolidadoFaker.cs
+│   │   └── Features/
+│   │       ├── Commands/AtualizarSaldoConsolidaoCommandHandlerTests.cs (9 testes)
+│   │       └── Queries/GetSaldoConsolidadoQueryHandlerTests.cs         (7 testes)
+│   │
+│   └── FinControl.StressTests/                ← Teste de carga manual (NBomber)
+│       ├── Scenarios/
+│       │   ├── ConsolidadosScenario.cs        ← 50 req/s · p95 < 500ms · erro < 5%
+│       │   └── LancamentosScenario.cs         ← 10 req/s · p95 < 1000ms · erro < 5%
+│       ├── Fakers/
+│       │   ├── LancamentoFaker.cs             ← Bogus — crédito/débito aleatório
+│       │   └── LancamentoRequest.cs           ← DTO espelho sem dependência do Core
+│       ├── AuthHelper.cs                      ← Auto-fetch JWT via Keycloak (password grant)
+│       ├── StressConfig.cs                    ← Env vars: STRESS_BASE_URL, STRESS_DURATION…
+│       └── Program.cs                         ← NBomberRunner — cenários em paralelo;
+│                                                 relatórios em stress-reports/ (gitignored)
 │
 ├── docker-compose.yml           ← PostgreSQL, Redis, RabbitMQ, Vault, Keycloak, Kong
 ├── README.md
@@ -4005,7 +4027,7 @@ graph TB
 | Requisito | Atendido | Como |
 |-----------|----------|------|
 | Lançamentos independente do Consolidado | ✅ | Arquitetura event-driven: Outbox + RabbitMQ. Consolidado pode cair sem afetar Lançamentos |
-| 50 req/s no Consolidado | ✅ | Redis (<5ms por request) + Kong proxy-cache 30s + rate limiting 55 req/s com headroom |
+| 50 req/s no Consolidado | ✅ | Redis (<5ms por request) + Kong proxy-cache 30s + rate limiting 55 req/s com headroom; validado com `FinControl.StressTests` (NBomber) |
 | Máx. 5% de perda de requisições | ✅ | Outbox Manual (nunca perde evento) + Polly retry 3× + RabbitMQ durable queue + Redis lock atômico |
 
 ### Análise de Atendimento dos NFRs
@@ -4153,6 +4175,6 @@ Passed: 64   Failed: 0   Skipped: 0
 
 ---
 
-**Versão:** 3.0  
+**Versão:** 3.1  
 **Última atualização:** Maio 2026  
-**Status:** ✅ Implementação em produção — 64 testes passando, zero falhas
+**Status:** ✅ Implementação em produção — 64 testes passando, zero falhas; stress test NBomber implementado
