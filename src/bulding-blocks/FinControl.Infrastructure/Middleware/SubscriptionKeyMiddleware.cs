@@ -27,7 +27,8 @@ public sealed class SubscriptionKeyMiddleware(RequestDelegate next, string confi
         IConfiguration configuration,
         ILogger<SubscriptionKeyMiddleware> logger)
     {
-        if (context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase))
+        if (context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase) ||
+            context.Request.Path.StartsWithSegments("/metrics", StringComparison.OrdinalIgnoreCase))
         {
             await next(context);
             return;

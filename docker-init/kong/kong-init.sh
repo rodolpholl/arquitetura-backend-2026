@@ -60,37 +60,11 @@ vault_get() {
     | grep -o "\"$key\":\"[^\"]*\"" | head -1 | sed 's/^"[^"]*":"\([^"]*\)"$/\1/'
 }
 
-kong_upsert_consumer() {
-  local username=$1 subscription_key=$2
-
-  if curl -s -f -o /dev/null "$KONG_ADMIN/consumers/$username"; then
-    echo "  ↩  Consumer '$username' já existe — verificando credential..."
-  else
-    echo "  ➕ Criando consumer '$username'..."
-    curl -s -o /dev/null -X POST "$KONG_ADMIN/consumers" \
-      --data "username=$username" \
-      --data "custom_id=$username"
-  fi
-
-  local existing_key
-  existing_key=$(curl -s "$KONG_ADMIN/consumers/$username/key-auth" \
-    | grep -o '"key":"[^"]*"' | head -1 | sed 's/"key":"\([^"]*\)"/\1/')
-
-  if [ -n "$existing_key" ]; then
-    echo "  ↩  Key-auth para '$username' já configurado — ignorando..."
-  else
-    echo "  ➕ Associando subscription key ao consumer '$username'..."
-    curl -s -o /dev/null -X POST "$KONG_ADMIN/consumers/$username/key-auth" \
-      --data "key=$subscription_key"
-  fi
-}
-
 kong_upsert_plugin() {
   local target_type=$1  # "routes" ou "services"
   local target_name=$2
   local plugin_name=$3
   shift 3
-  # Verifica se o plugin já está instalado no target
   local count
   count=$(curl -s "$KONG_ADMIN/$target_type/$target_name/plugins" \
     | grep -o "\"name\":\"$plugin_name\"" | wc -l || echo 0)
@@ -104,6 +78,32 @@ kong_upsert_plugin() {
   fi
 }
 
+kong_upsert_jwt_consumer() {
+  local username=$1 issuer=$2 public_key=$3
+
+  if curl -s -f -o /dev/null "$KONG_ADMIN/consumers/$username"; then
+    echo "  ↩  Consumer '$username' já existe — verificando JWT credential..."
+  else
+    echo "  ➕ Criando consumer '$username'..."
+    curl -s -o /dev/null -X POST "$KONG_ADMIN/consumers" \
+      --data "username=$username"
+  fi
+
+  local existing
+  existing=$(curl -s "$KONG_ADMIN/consumers/$username/jwt" \
+    | grep -o "\"key\":\"[^\"]*\"" | head -1)
+
+  if [ -n "$existing" ]; then
+    echo "  ↩  JWT credential para '$username' já registrado — ignorando..."
+  else
+    echo "  ➕ Registrando chave pública RS256 do Keycloak para '$username'..."
+    curl -s -o /dev/null -X POST "$KONG_ADMIN/consumers/$username/jwt" \
+      --data "algorithm=RS256" \
+      --data "key=$issuer" \
+      --data-urlencode "rsa_public_key=$public_key"
+  fi
+}
+
 # ─── Aguardar serviços ───────────────────────────────────────────────────────
 
 wait_for "$KONG_ADMIN/status"  "Kong"
@@ -112,6 +112,9 @@ wait_for "$VAULT_ADDR/v1/sys/health" "Vault"
 sleep 3
 
 # ─── Ler subscription keys do Vault ─────────────────────────────────────────
+# As subscription keys são segredos compartilhados entre Kong e cada API upstream.
+# O cliente NUNCA envia essa chave — Kong a injeta automaticamente via request-transformer.
+# Isso garante que apenas o Kong (API Gateway) consiga chamar os serviços internos.
 echo "🔑 Lendo subscription keys do Vault..."
 LANC_SUBSCRIPTION_KEY=$(vault_get "kong" "lancamentos_subscription_key")
 CONS_SUBSCRIPTION_KEY=$(vault_get "kong" "consolidados_subscription_key")
@@ -128,15 +131,38 @@ fi
 
 echo "  ✅ Subscription keys carregadas do Vault"
 
+# ─── Ler chave pública do Keycloak ──────────────────────────────────────────
+echo "🔑 Obtendo chave pública RS256 do Keycloak (realm fincontrol)..."
+KEYCLOAK_PUBLIC_KEY_B64=$(curl -s "$KEYCLOAK_REALM_URL" \
+  | grep -o '"public_key":"[^"]*"' | sed 's/"public_key":"//;s/"//')
+
+if [ -z "$KEYCLOAK_PUBLIC_KEY_B64" ]; then
+  echo "  ❌ Não foi possível obter a chave pública do Keycloak. Abortando."
+  exit 1
+fi
+
+KEYCLOAK_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----
+$KEYCLOAK_PUBLIC_KEY_B64
+-----END PUBLIC KEY-----"
+
+echo "  ✅ Chave pública do Keycloak obtida"
+
 echo ""
 echo "═══════════════════════════════════════════════════════════"
 echo "  Configurando Kong — FinControl API Gateway"
 echo "═══════════════════════════════════════════════════════════"
+# ─── Consumer Keycloak ──────────────────────────────────────────────────────
+# Kong valida o JWT verificando a assinatura com a chave pública do Keycloak.
+# O campo 'key' deve coincidir com o claim 'iss' do token (URL pública do realm).
+echo "▶ [0/2] Consumer JWT — Keycloak (realm fincontrol)"
+kong_upsert_jwt_consumer \
+  "keycloak-fincontrol" \
+  "http://localhost:8081/realms/fincontrol" \
+  "$KEYCLOAK_PUBLIC_KEY"
+
 echo ""
 
 # ─── 1. SERVICE: fincontrol-lancamentos ─────────────────────────────────────
-# POST /lancamentos/registrar
-# Porta: 5083 (launchSettings.json / Lancamentos.API)
 
 echo "▶ [1/2] Service: fincontrol-lancamentos (porta 5083)"
 kong_upsert_service \
@@ -145,7 +171,6 @@ kong_upsert_service \
 
 echo ""
 
-# Route principal — cobre POST /lancamentos/registrar e futuras rotas sob /lancamentos
 kong_upsert_route \
   "fincontrol-lancamentos" \
   "lancamentos-registrar" \
@@ -154,32 +179,36 @@ kong_upsert_route \
 
 echo ""
 
-# Plugin: JWT Bearer (valida tokens Keycloak)
+# Plugin: JWT Bearer — valida token Keycloak enviado pelo cliente
 kong_upsert_plugin "services" "fincontrol-lancamentos" "jwt"
 
-# Plugin: Rate limiting — proteção contra flood no serviço de escrita
+# Plugin: Rate limiting
 kong_upsert_plugin "services" "fincontrol-lancamentos" "rate-limiting" \
   --data "config.minute=300" \
   --data "config.policy=local" \
   --data "config.fault_tolerant=true" \
   --data "config.hide_client_headers=false"
 
-# Plugin: Correlation ID — propaga X-Correlation-Id para rastreamento distribuído
+# Plugin: Correlation ID
 kong_upsert_plugin "services" "fincontrol-lancamentos" "correlation-id" \
   --data "config.header_name=X-Correlation-Id" \
   --data "config.generator=uuid#counter" \
   --data "config.echo_downstream=true"
 
-# Plugin: Request Size Limiting — bloqueia payloads acima de 1MB
+# Plugin: Request Size Limiting
 kong_upsert_plugin "services" "fincontrol-lancamentos" "request-size-limiting" \
   --data "config.allowed_payload_size=1"
+
+# Plugin: Request Transformer — injeta subscription key antes de encaminhar ao upstream.
+# O cliente nunca envia este header; ele é adicionado internamente pelo Kong.
+# A API upstream valida a presença da chave e rejeita qualquer requisição sem ela,
+# garantindo que apenas o Kong possa chamar os serviços diretamente.
+kong_upsert_plugin "services" "fincontrol-lancamentos" "request-transformer" \
+  --data "config.add.headers[]=X-Subscription-Key:$LANC_SUBSCRIPTION_KEY"
 
 echo ""
 
 # ─── 2. SERVICE: fincontrol-consolidados ────────────────────────────────────
-# GET /consolidados/saldo?data-lancamento=YYYY-MM-DD
-# Porta: 5260 (launchSettings.json / Consolidado.API)
-# NFR: 50 req/s com no máximo 5% de perda
 
 echo "▶ [2/2] Service: fincontrol-consolidados (porta 5260)"
 kong_upsert_service \
@@ -188,7 +217,6 @@ kong_upsert_service \
 
 echo ""
 
-# Route principal — cobre GET /consolidados/saldo e futuras rotas sob /consolidados
 kong_upsert_route \
   "fincontrol-consolidados" \
   "consolidados-saldo" \
@@ -201,8 +229,6 @@ echo ""
 kong_upsert_plugin "services" "fincontrol-consolidados" "jwt"
 
 # Plugin: Rate limiting — NFR: 50 req/s, máx 5% perda
-#   50 req/s → 3.000 req/min → configuramos headroom de 10% → 3.300/min
-#   limit by: consumer (usuário autenticado) para granularidade fina
 kong_upsert_plugin "services" "fincontrol-consolidados" "rate-limiting" \
   --data "config.second=55" \
   --data "config.minute=3300" \
@@ -212,7 +238,6 @@ kong_upsert_plugin "services" "fincontrol-consolidados" "rate-limiting" \
   --data "config.hide_client_headers=false"
 
 # Plugin: Proxy Cache — cache de respostas GET por 30s
-#   Reduz carga no upstream em picos; saldo consolidado é eventual consistent por design
 kong_upsert_plugin "services" "fincontrol-consolidados" "proxy-cache" \
   --data "config.response_code[]=200" \
   --data "config.request_method[]=GET" \
@@ -226,47 +251,9 @@ kong_upsert_plugin "services" "fincontrol-consolidados" "correlation-id" \
   --data "config.generator=uuid#counter" \
   --data "config.echo_downstream=true"
 
-echo ""
-
-# ─── 3. CONSUMERS + KEY-AUTH ─────────────────────────────────────────────────
-# Cada consumer representa um cliente autorizado a consumir a API.
-# A subscription key é validada pelo key-auth plugin ANTES do JWT.
-# Fluxo: Kong recebe request → valida X-Subscription-Key → valida JWT Bearer → upstream
-
-echo "▶ [3/3] Consumers e Subscription Keys (key-auth)"
-echo ""
-
-# Consumer dedicado para a API de Lançamentos
-kong_upsert_consumer \
-  "fincontrol-lancamentos-consumer" \
-  "$LANC_SUBSCRIPTION_KEY"
-
-echo ""
-
-# Consumer dedicado para a API de Consolidados
-kong_upsert_consumer \
-  "fincontrol-consolidados-consumer" \
-  "$CONS_SUBSCRIPTION_KEY"
-
-echo ""
-
-# Plugin key-auth no service Lancamentos
-# Header: X-Subscription-Key (padronizado com o Azure APIM)
-# hide_credentials=true → remove o header antes de repassar ao upstream
-kong_upsert_plugin "services" "fincontrol-lancamentos" "key-auth" \
-  --data "config.key_names[]=X-Subscription-Key" \
-  --data "config.hide_credentials=true" \
-  --data "config.key_in_header=true" \
-  --data "config.key_in_query=false" \
-  --data "config.key_in_body=false"
-
-# Plugin key-auth no service Consolidados
-kong_upsert_plugin "services" "fincontrol-consolidados" "key-auth" \
-  --data "config.key_names[]=X-Subscription-Key" \
-  --data "config.hide_credentials=true" \
-  --data "config.key_in_header=true" \
-  --data "config.key_in_query=false" \
-  --data "config.key_in_body=false"
+# Plugin: Request Transformer — injeta subscription key no upstream
+kong_upsert_plugin "services" "fincontrol-consolidados" "request-transformer" \
+  --data "config.add.headers[]=X-Subscription-Key:$CONS_SUBSCRIPTION_KEY"
 
 echo ""
 
@@ -282,18 +269,25 @@ echo ""
 echo "  [Lancamentos — escrita]"
 echo "    POST  http://localhost:8000/lancamentos/registrar"
 echo "    → upstream: host.docker.internal:5083"
-echo "    → plugins: jwt, rate-limiting (300 req/min), correlation-id, request-size-limiting"
+echo "    → plugins: jwt, rate-limiting (300 req/min), correlation-id,"
+echo "               request-size-limiting, request-transformer (injeta X-Subscription-Key)"
 echo ""
 echo "  [Consolidados — leitura]"
 echo "    GET   http://localhost:8000/consolidados/saldo?data-lancamento=YYYY-MM-DD"
 echo "    → upstream: host.docker.internal:5260"
-echo "    → plugins: jwt, rate-limiting (55 req/s / 3300 req/min), proxy-cache (30s), correlation-id"
+echo "    → plugins: jwt, rate-limiting (55 req/s / 3300 req/min),"
+echo "               proxy-cache (30s), correlation-id, request-transformer (injeta X-Subscription-Key)"
 echo ""
 echo "  [Health checks — acesso direto, sem passar pelo Kong]"
 echo "    GET   http://localhost:5083/health        Lancamentos liveness"
 echo "    GET   http://localhost:5083/health/ready  Lancamentos readiness"
 echo "    GET   http://localhost:5260/health        Consolidados liveness"
 echo "    GET   http://localhost:5260/health/ready  Consolidados readiness"
+echo ""
+echo "  AUTENTICAÇÃO:"
+echo "    O cliente envia apenas: Authorization: Bearer <token-jwt>"
+echo "    Kong injeta X-Subscription-Key automaticamente no upstream."
+echo "    A chave nunca é exposta ao cliente."
 echo ""
 echo "  INTERFACES DE ADMINISTRAÇÃO:"
 echo "    Kong Manager:    http://localhost:8002"
