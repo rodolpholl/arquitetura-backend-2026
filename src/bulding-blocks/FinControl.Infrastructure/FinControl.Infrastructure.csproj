@@ -5,6 +5,7 @@
     <OutputType>Library</OutputType>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="RabbitMQ.Client" />
     <PackageReference Include="WolverineFx" />
     <PackageReference Include="WolverineFx.Http" />
     <PackageReference Include="WolverineFx.RabbitMQ" />

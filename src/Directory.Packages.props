@@ -3,6 +3,8 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <!-- ===== RABBITMQ CLIENT ===== -->
+    <PackageVersion Include="RabbitMQ.Client" Version="7.1.2" />
     <!-- ===== WOLVERINE 5.x (Mediator + Bus + Outbox nativo) ===== -->
     <PackageVersion Include="EntityFramework.Extended" Version="6.1.0.168" />
     <PackageVersion Include="LinqKit.Core" Version="1.2.11" />

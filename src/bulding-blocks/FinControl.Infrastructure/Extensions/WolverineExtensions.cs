@@ -1,3 +1,4 @@
+using FinControl.Infrastructure.Messaging;
 using FinControl.Infrastructure.Middleware;
 using FinControl.Infrastructure.Vault;
 using FinControl.Infrastructure.Wolverine;
@@ -52,6 +53,7 @@ public static class WolverineExtensions
         // Em desenvolvimento, RabbitMQ é opcional
         var isRabbitMqAvailable = !string.IsNullOrEmpty(rabbitMqUri);
 
+        builder.Services.AddSingleton<RabbitMqPublisher>();
         builder.Services.AddWolverineHttp();
 
         builder.Host.UseWolverine(opts =>

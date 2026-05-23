@@ -1,27 +1,26 @@
+using FinControl.Infrastructure.Messaging;
 using FinControl.Lancamentos.Core.Context;
 using FinControl.Lancamentos.Core.Domain;
-using FinControl.Lancamentos.Core.Features.Events;
+using FinControl.SharedKernel.Domain.Events;
 using Microsoft.Extensions.Logging;
 
 namespace FinControl.Lancamentos.Core.Features.Commands.RegistrarLancamento;
 
-/// <summary>
-/// Handler para o comando RegistrarLancamento.
-/// Usa constructor injection para LancamentosDbContext — resolve via DI padrão,
-/// sem depender do code gen de method-parameter do Wolverine EF Core.
-/// </summary>
 public class RegistrarLancamentoCommandHandler(
     LancamentosDbContext db,
+    RabbitMqPublisher publisher,
     ILogger<RegistrarLancamentoCommandHandler> logger)
 {
-    public async Task<(RegistrarLancamentoResponse, LancamentoRegistradoMessage?)> Handle(
+    private const string Exchange = "lancamentos.events";
+    private const string RoutingKey = "lancamento.criado";
+
+    public async Task<RegistrarLancamentoResponse> Handle(
         RegistrarLancamentoCommand command,
         CancellationToken cancellationToken = default)
     {
         var existente = await VerificarIdempotenciaAsync(command.IdempotencyKey, cancellationToken);
         if (existente is not null)
-            return (MapearParaResponse(existente), null);
-
+            return MapearParaResponse(existente);
 
         Lancamento lancamento = new()
         {
@@ -40,20 +39,15 @@ public class RegistrarLancamentoCommandHandler(
 
         var evento = MapearParaEvento(lancamento, command);
 
+        await publisher.PublishAsync(evento, Exchange, RoutingKey, cancellationToken);
+
         if (logger.IsEnabled(LogLevel.Information))
             logger.LogInformation(
-                "Mensagem {EventType} publicada para o RabbitMQ | Exchange={Exchange} RoutingKey={RoutingKey} Queue={Queue} NavigationId={NavigationId} Modalidade={Modalidade} Valor={Valor} UsuarioId={UsuarioId} CorrelationId={CorrelationId}",
-                nameof(LancamentoRegistradoMessage),
-                "lancamentos.events",
-                "lancamento.criado",
-                "lancamentos.registered",
-                evento.NavigationId,
-                evento.Modalidade,
-                evento.Valor,
-                evento.UsuarioId,
-                evento.CorrelationId);
+                "LancamentoRegistrado publicado | Exchange={Exchange} RoutingKey={RoutingKey} NavigationId={NavigationId} Modalidade={Modalidade} Valor={Valor} CorrelationId={CorrelationId}",
+                Exchange, RoutingKey,
+                evento.NavigationId, evento.Modalidade, evento.Valor, evento.CorrelationId);
 
-        return (MapearParaResponse(lancamento), evento);
+        return MapearParaResponse(lancamento);
     }
 
     private static Task<Lancamento?> VerificarIdempotenciaAsync(
@@ -78,7 +72,7 @@ public class RegistrarLancamentoCommandHandler(
         new(
             Id: lancamento.Id,
             NavigationId: lancamento.NavigationId ?? Guid.NewGuid(),
-            Modalidade: lancamento.Modalidade,
+            Modalidade: (ModalidadeLancamento)(int)lancamento.Modalidade,
             Valor: lancamento.Valor,
             Descricao: lancamento.Descricao,
             DataLancamento: lancamento.DataLancamento,
