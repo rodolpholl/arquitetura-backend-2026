@@ -11,13 +11,28 @@ namespace FinControl.Lancamentos.Core.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            // Adiciona nullable para suportar linhas já existentes
             migrationBuilder.AddColumn<Guid>(
                 name: "idempotency_key",
                 schema: "lancamentos",
                 table: "lancamentos",
                 type: "uuid",
+                nullable: true);
+
+            // Atribui UUIDs únicos a todas as linhas existentes antes de aplicar a restrição
+            migrationBuilder.Sql(
+                "UPDATE lancamentos.lancamentos SET idempotency_key = gen_random_uuid() WHERE idempotency_key IS NULL;");
+
+            // Torna NOT NULL após preencher os valores
+            migrationBuilder.AlterColumn<Guid>(
+                name: "idempotency_key",
+                schema: "lancamentos",
+                table: "lancamentos",
+                type: "uuid",
                 nullable: false,
-                defaultValue: new Guid("00000000-0000-0000-0000-000000000000"));
+                oldClrType: typeof(Guid),
+                oldType: "uuid",
+                oldNullable: true);
 
             migrationBuilder.CreateIndex(
                 name: "idx_lancamento_idempotency_key",

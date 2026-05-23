@@ -96,22 +96,19 @@ builder.Services.AddProblemDetails();
 var app = builder.Build();
 
 // ==================== DATABASE MIGRATIONS ====================
-// Aplica automaticamente todas as migrations pendentes no startup
-try
+// Aplica automaticamente todas as migrations pendentes no startup.
+// Falha imediatamente em qualquer ambiente — migrations pendentes indicam
+// que o banco está em estado inconsistente com o código em execução.
 {
     using var scope = app.Services.CreateScope();
-    var dbContext = scope.ServiceProvider.GetRequiredService<LancamentosDbContext>();
-    await dbContext.Database.MigrateAsync();
-    Console.WriteLine("✅ Migrations aplicadas com sucesso");
-}
-catch (Exception ex) when (!app.Environment.IsProduction())
-{
-    Console.WriteLine($"⚠️  Erro ao aplicar migrations em desenvolvimento: {ex.Message}");
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"❌ ERRO CRÍTICO ao aplicar migrations em produção: {ex.Message}");
-    throw;
+    var db = scope.ServiceProvider.GetRequiredService<LancamentosDbContext>();
+    var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
+    if (pending.Count > 0)
+    {
+        Console.WriteLine($"Aplicando {pending.Count} migration(s) pendente(s): {string.Join(", ", pending)}");
+        await db.Database.MigrateAsync();
+        Console.WriteLine("Migrations aplicadas com sucesso.");
+    }
 }
 
 // ==================== MIDDLEWARES HTTP ====================
