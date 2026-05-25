@@ -1,6 +1,6 @@
 # FinControl — Sistema de Controle de Fluxo de Caixa
 
-**Desafio Arquiteto de Software 2026**  
+**Desafio Arquiteto de Software 2026 — v3.0**  
 ASP.NET Core 10 | Wolverine 5.39 | Vertical Slice + CQRS + Event-Driven
 
 ---
@@ -59,6 +59,8 @@ Serviços levantados:
 | Grafana | `http://localhost:3000` |
 | Jaeger UI | `http://localhost:16686` |
 | Prometheus | `http://localhost:9090` |
+| Scalar (Lançamentos) | `http://localhost:5083/scalar/v1` |
+| Scalar (Consolidado) | `http://localhost:5260/scalar/v1` |
 
 ### 3. Build e Testes
 
@@ -66,7 +68,7 @@ Serviços levantados:
 # Build da solução completa
 dotnet build
 
-# Todos os testes
+# Todos os testes (64 testes: 48 Lancamentos + 16 Consolidado)
 dotnet test
 
 # Apenas os testes de Lançamentos
@@ -76,7 +78,21 @@ dotnet test src/tests/FinControl.Lancamentos.Tests/
 dotnet test src/tests/FinControl.Consolidado.Tests/
 ```
 
-### 4. Executar as APIs (desenvolvimento local)
+### 4. Stress Test (NBomber)
+
+Executa os dois cenários em paralelo (requer infraestrutura rodando):
+
+```bash
+dotnet run --project src/tests/FinControl.StressTests/
+```
+
+Cenários:
+- **Consolidado**: ramp 20s → 50 req/s sustentado → ramp-down 10s · p95 < 500ms · erro < 5%
+- **Lançamentos**: ramp 20s → 10 req/s sustentado → ramp-down 10s · p95 < 1000ms · erro < 5%
+
+Relatórios HTML e Markdown são gerados em `stress-reports/` (não versionado).
+
+### 5. Executar as APIs (desenvolvimento local)
 
 ```bash
 # API de Lançamentos (porta 5083)
@@ -147,9 +163,7 @@ X-Subscription-Key: fc-cons-dev-subkey-2026-xyz789ab
 {
   "data": "2026-05-23",
   "saldoEmCentavos": 45000,
-  "saldoFormatado": "R$ 450,00",
-  "totalCreditos": 60000,
-  "totalDebitos": 15000
+  "saldoFormatado": "R$ 450,00"
 }
 ```
 
@@ -204,19 +218,21 @@ Credenciais de desenvolvimento:
 ```
 src/
 ├── bulding-blocks/
-│   ├── FinControl.SharedKernel/        # Domain primitives (AggregateRoot, DomainEvent, ValueObject)
-│   └── FinControl.Infrastructure/     # Cross-cutting: Vault, Redis, RabbitMQ, Observabilidade
+│   ├── FinControl.SharedKernel/        # Domain primitives (AggregateRoot, DomainEvent, ValueObject, Result<T>)
+│   ├── FinControl.Infrastructure/     # Cross-cutting: Vault, Redis, RabbitMQ, Observabilidade, Polly
+│   └── FinControl.Auth/               # Keycloak JWT Bearer (AddFinControlKeycloakAuth)
 ├── Modules/
 │   ├── Lancamentos/
-│   │   ├── FinControl.Lancamentos.Core/   # Domínio + Features (Vertical Slice)
-│   │   └── FinControl.Lancamentos.API/    # Host + Middleware
+│   │   ├── FinControl.Lancamentos.Core/   # Domínio + Features (Vertical Slice) + Outbox + Migrations
+│   │   └── FinControl.Lancamentos.API/    # Host + Middleware + Scalar UI
 │   └── Consolidados/
 │       ├── FinControl.Consolidado.Core/   # Domínio + Features (Vertical Slice)
-│       ├── FinControl.Consolidado.API/    # Host + Middleware
-│       └── FinControl.Consolidado.Worker/ # Consumer RabbitMQ
+│       ├── FinControl.Consolidado.API/    # Host + Middleware + Scalar UI
+│       └── FinControl.Consolidado.Worker/ # Consumer RabbitMQ (reconexão exponencial 5s→60s)
 └── tests/
-    ├── FinControl.Lancamentos.Tests/  # xUnit + Moq + Bogus (domínio + handlers + validators)
-    └── FinControl.Consolidado.Tests/  # xUnit + Moq + Bogus (queries + handlers)
+    ├── FinControl.Lancamentos.Tests/  # xUnit + Moq + Bogus — 48 testes
+    ├── FinControl.Consolidado.Tests/  # xUnit + Moq + Bogus — 16 testes
+    └── FinControl.StressTests/        # NBomber 5.5.0 — execução manual (dotnet run)
 
 docker-init/
 ├── kong/kong-init.sh      # Provisiona services, routes e plugins no Kong
@@ -230,16 +246,19 @@ docker-init/
 
 | Categoria | Tecnologia |
 |---|---|
-| Runtime | .NET 10 / ASP.NET Core 10 |
-| Mediator + Bus | Wolverine 5.39 |
-| Banco de Dados | PostgreSQL 16 + EF Core 10 |
-| Cache | Redis 7 |
-| Mensageria | RabbitMQ 3.12 |
-| API Gateway | Kong Gateway (OSS) |
-| Identidade | Keycloak 26 (OIDC / JWT) |
-| Secrets | HashiCorp Vault (KV v2) |
-| Tracing | OpenTelemetry + Grafana Tempo / Jaeger |
-| Métricas | Prometheus + Grafana |
-| Logs | Serilog + Grafana Loki |
-| Testes | xUnit + Moq + Bogus + FluentAssertions |
+| Runtime | .NET 10 / ASP.NET Core 10 (Minimal APIs) |
+| Mediator + Bus | Wolverine 5.39 (CQRS, HTTP, middleware pipeline) |
+| Banco de Dados | PostgreSQL 16 + EF Core 10 (Npgsql) |
+| Cache + Lock | Redis 7 — `RedisCacheService` + `IRedisLockService` (SETNX + Lua) |
+| Mensageria | RabbitMQ 3.12 — Outbox Pattern + `OutboxRelayService` (Polly retry 3×) |
+| API Gateway | Kong Gateway OSS — JWT RS256, rate-limiting, request-transformer |
+| Identidade | Keycloak 26 (OIDC / JWT Bearer) |
+| Secrets | HashiCorp Vault 1.15 (KV v2 — `VaultConfigurationProvider`) |
+| Resiliência | Polly v8 (`ResiliencePipelineBuilder` — backoff exponencial + jitter) |
+| Tracing | OpenTelemetry + Jaeger (OTLP) |
+| Métricas | Prometheus (`prometheus-net`) + Grafana 11 |
+| Logs | Serilog + Grafana Loki (CorrelationId enriquecido) |
+| Documentação API | Scalar UI (OpenAPI — ambas as APIs) |
+| Testes unitários | xUnit + Moq + Bogus + FluentAssertions (64 testes) |
+| Stress Test | NBomber 5.5.0 — relatórios HTML + Markdown |
 | Padrão | Vertical Slice + CQRS + Event-Driven + DDD |
