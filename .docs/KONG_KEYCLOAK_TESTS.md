@@ -1,8 +1,9 @@
-# Kong + Keycloak Integration Tests
+# Kong + Keycloak — Testes de Integração
 
-Testes praticos para verificar que Kong esta protegendo as APIs corretamente.
+> **Objetivo:** Verificar que Kong está protegendo as APIs corretamente via JWT RS256 + rate-limiting.
+> **Audiência:** Desenvolvedores e SREs
 
-## Pre-requisitos
+## Pré-requisitos
 
 - `docker-compose up -d` executado e todos os inits com `Exited (0)`
 - Kong respondendo: `http://localhost:8001/status` (HTTP 200)
@@ -13,43 +14,34 @@ Testes praticos para verificar que Kong esta protegendo as APIs corretamente.
 
 ## Teste 1: Verificar Services e Routes no Kong
 
-### Objetivo
-Confirmar que kong-init criou os services e routes esperados.
+**Objetivo:** Confirmar que kong-init criou os services e routes com as URLs corretas.
 
 **PowerShell:**
 ```powershell
-# Listar services
 (Invoke-WebRequest -Uri "http://localhost:8001/services" -Method GET).Content |
   ConvertFrom-Json | Select-Object -ExpandProperty data |
   Format-Table name, url
-
-# Listar routes
-(Invoke-WebRequest -Uri "http://localhost:8001/routes" -Method GET).Content |
-  ConvertFrom-Json | Select-Object -ExpandProperty data |
-  Format-Table name, paths
 ```
 
 **Bash:**
 ```bash
 curl -s http://localhost:8001/services | jq '.data[] | {name, url}'
-curl -s http://localhost:8001/routes | jq '.data[] | {name, paths}'
 ```
 
 **Resultado esperado:**
 ```
-fincontrol-lancamentos  →  /lancamentos
-fincontrol-consolidados →  /consolidados
+fincontrol-lancamentos  →  http://host.docker.internal:5083
+fincontrol-consolidados →  http://host.docker.internal:5260
 ```
 
-PASS → Services e routes existem
+PASS → Services com URLs corretas (`5083` / `5260`)
 FAIL → Ver `docker-compose logs kong-init`
 
 ---
 
 ## Teste 2: Verificar Plugins Ativos
 
-### Objetivo
-Confirmar que key-auth e oidc estao habilitados.
+**Objetivo:** Confirmar que `jwt`, `request-transformer`, `rate-limiting` e `proxy-cache` estão habilitados.
 
 **Bash:**
 ```bash
@@ -58,16 +50,17 @@ curl -s http://localhost:8001/plugins | jq '.data[] | {name, enabled}'
 
 **Resultado esperado:**
 ```json
-{"name": "key-auth", "enabled": true}
-{"name": "oidc",     "enabled": true}
+{"name": "jwt",                 "enabled": true}
+{"name": "request-transformer", "enabled": true}
+{"name": "rate-limiting",       "enabled": true}
+{"name": "proxy-cache",         "enabled": true}
 ```
 
 ---
 
-## Teste 3: Obter Token do Keycloak
+## Teste 3: Obter Token JWT do Keycloak
 
-### Objetivo
-Autenticar com Keycloak e obter JWT.
+**Objetivo:** Autenticar com Keycloak e obter JWT RS256.
 
 **PowerShell:**
 ```powershell
@@ -91,86 +84,91 @@ TOKEN=$(curl -s -X POST \
 echo "Token: ${TOKEN:0:50}..."
 ```
 
-PASS → Token JWT retornado
+PASS → Token JWT retornado (string longa começando com `eyJ...`)
 FAIL → Verificar credenciais em [KEYCLOAK_SETUP_GUIDE.md](KEYCLOAK_SETUP_GUIDE.md)
 
 ---
 
-## Teste 4: Acesso Sem Subscription Key (deve ser bloqueado)
+## Teste 4: Acesso Sem Token JWT (deve ser bloqueado)
 
-### Objetivo
-Confirmar que Kong rejeita requests sem `X-Subscription-Key`.
-
-**Bash:**
-```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/lancamentos/health
-# Esperado: 401
-```
-
-PASS → HTTP 401 com `{"message":"No API key found in request"}`
-FAIL → Plugin key-auth nao esta ativo
-
----
-
-## Teste 5: Acesso Sem Token JWT (deve ser bloqueado)
-
-### Objetivo
-Confirmar que Kong rejeita requests sem token JWT apos passar pelo key-auth.
+**Objetivo:** Confirmar que Kong rejeita requests sem `Authorization: Bearer`.
 
 **Bash:**
 ```bash
 curl -s -o /dev/null -w "%{http_code}" \
-  -H "X-Subscription-Key: fc-lanc-dev-subkey-2026-abc123ef" \
   http://localhost:8000/lancamentos/health
-# Esperado: 401 ou 302 (redirect para login Keycloak)
+# Esperado: 401
 ```
+
+PASS → HTTP 401 com `{"message":"Unauthorized"}`
+FAIL → Plugin `jwt` não está ativo — ver Teste 2
 
 ---
 
-## Teste 6: Acesso Com Ambas as Credenciais (deve passar)
+## Teste 5: Acesso Com Token JWT Válido (deve passar)
 
-### Objetivo
-Confirmar que Kong encaminha request com key-auth + JWT validos.
+**Objetivo:** Confirmar que Kong encaminha requests com JWT válido.
 
 **PowerShell:**
 ```powershell
-# Obter token primeiro (Teste 3)
 $response = Invoke-WebRequest -Uri "http://localhost:8000/lancamentos/health" `
-    -Headers @{
-        "X-Subscription-Key" = "fc-lanc-dev-subkey-2026-abc123ef"
-        "Authorization"      = "Bearer $TOKEN"
-    }
+    -Headers @{"Authorization" = "Bearer $TOKEN"}
 Write-Host "Status: $($response.StatusCode)"
 ```
 
 **Bash:**
 ```bash
 curl -s -o /dev/null -w "%{http_code}" \
-  -H "X-Subscription-Key: fc-lanc-dev-subkey-2026-abc123ef" \
   -H "Authorization: Bearer $TOKEN" \
   http://localhost:8000/lancamentos/health
 # Esperado: 200
 ```
 
-PASS → HTTP 200 (ou 404 se API ainda nao subiu)
-FAIL → Verificar token e subscription key
+PASS → HTTP 200
+FAIL → Verificar token e configuração do plugin `jwt` no Kong
 
 ---
 
-## Teste 7: Token JWT Invalido (deve ser rejeitado)
+## Teste 6: Token JWT Inválido (deve ser rejeitado)
 
 **Bash:**
 ```bash
 curl -s -o /dev/null -w "%{http_code}" \
-  -H "X-Subscription-Key: fc-lanc-dev-subkey-2026-abc123ef" \
   -H "Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.invalid.invalid" \
   http://localhost:8000/lancamentos/health
 # Esperado: 401
 ```
 
+PASS → HTTP 401
+FAIL → Plugin `jwt` não está validando assinatura
+
+---
+
+## Teste 7: JWKS do Keycloak (chave pública RS256)
+
+**Objetivo:** Confirmar que a chave pública usada para validar tokens está disponível.
+
+**Bash:**
+```bash
+curl -s http://localhost:8081/realms/fincontrol/protocol/openid-connect/certs | \
+  jq '.keys[] | {kty, alg, use, kid}'
+```
+
+**Resultado esperado:**
+```json
+{
+  "kty": "RSA",
+  "alg": "RS256",
+  "use": "sig",
+  "kid": "..."
+}
+```
+
 ---
 
 ## Teste 8: OIDC Discovery do Keycloak
+
+**Objetivo:** Confirmar endpoints do Keycloak.
 
 **Bash:**
 ```bash
@@ -189,6 +187,21 @@ curl -s http://localhost:8081/realms/fincontrol/.well-known/openid-configuration
 
 ---
 
+## Teste 9: Rate Limiting (Consolidado — 55 req/s)
+
+**Objetivo:** Confirmar que o rate limiting está ativo nos headers de resposta.
+
+**Bash:**
+```bash
+curl -s -I \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/consolidados/saldo?data-lancamento=2026-05-23" \
+  | grep -i "ratelimit"
+# Esperado: X-RateLimit-Limit-Second: 55
+```
+
+---
+
 ## Report Template
 
 ```
@@ -197,32 +210,32 @@ Data: [DATA]
 
 | Teste | Status | Detalhes |
 |-------|--------|----------|
-| 1. Services/Routes     | PASS/FAIL | |
-| 2. Plugins ativos      | PASS/FAIL | |
-| 3. Token Keycloak      | PASS/FAIL | |
-| 4. Sem subscription key| PASS/FAIL | HTTP 401 esperado |
-| 5. Sem JWT             | PASS/FAIL | HTTP 401 esperado |
-| 6. Ambas credenciais   | PASS/FAIL | HTTP 200 esperado |
-| 7. JWT invalido        | PASS/FAIL | HTTP 401 esperado |
-| 8. OIDC Discovery      | PASS/FAIL | |
+| 1. Services/Routes (portas 5083/5260)  | PASS/FAIL | |
+| 2. Plugins ativos (jwt + rate-limiting)| PASS/FAIL | |
+| 3. Token Keycloak RS256                | PASS/FAIL | |
+| 4. Sem JWT → bloqueado                 | PASS/FAIL | HTTP 401 esperado |
+| 5. Com JWT válido → passa              | PASS/FAIL | HTTP 200 esperado |
+| 6. JWT inválido → bloqueado            | PASS/FAIL | HTTP 401 esperado |
+| 7. JWKS disponível                     | PASS/FAIL | |
+| 8. OIDC Discovery                      | PASS/FAIL | |
+| 9. Rate limiting nos headers           | PASS/FAIL | |
 ```
 
 ---
 
 ## Troubleshooting
 
-| Problema | Solucao |
+| Problema | Solução |
 |----------|---------|
-| `Connection refused` em :8000 | Kong nao subiu — `docker-compose ps kong` |
-| `No API key found` | Adicionar header `X-Subscription-Key` |
-| `Invalid authentication credentials` | Verificar chave em Vault `secret/dev/kong` |
-| `401` com token valido | Verificar issuer — deve ser `http://localhost:8081/realms/fincontrol` |
-| Token expirado | Renovar token (TTL padrao: 300s) |
-| CORS error | Configurar Web Origins em Keycloak |
-| kong-init nao completou | `docker-compose logs kong-init` |
+| `Connection refused` em :8000 | Kong não subiu — `docker-compose ps kong` |
+| `Unauthorized` com token válido | Verificar issuer — deve ser `http://localhost:8081/realms/fincontrol` |
+| Token expirado | Renovar token (TTL padrão: 300s) |
+| Services com portas erradas | `docker-compose logs kong-init` — verificar se usa `5083`/`5260` |
+| `502 Bad Gateway` | API .NET não está rodando — iniciar as APIs (ver [../README.md](../README.md)) |
+| kong-init não completou | `docker-compose logs kong-init` |
 
 ---
 
-**Versao:** 2.0
-**Ultima atualizacao:** Maio 2026
+**Versão:** 3.0
+**Última atualização:** Maio 2026
 **Status:** Ativo

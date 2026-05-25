@@ -128,14 +128,15 @@ Veja [docker-compose.yml](../docker-compose.yml) para configuração dos serviç
 
 ```
 .docs/
-├── ARQUITETURA.md                    ← Documento central (v2.0)
+├── ARQUITETURA.md                    ← Documento central e autoritativo (v3.0)
 ├── CONVENCOES.md                     ← Este arquivo
+├── PROGRESSO.md                      ← Status de implementação e roadmap
 ├── DOCKER-COMPOSE-EXECUTION-GUIDE.md ← Como subir a infra local
-├── INIT-CONTAINERS-CLEANUP.md        ← Sequência de boot e limpeza
-├── KEYCLOAK_SETUP_GUIDE.md           ← Configuração do Keycloak
-├── KONG_KEYCLOAK_OIDC.md             ← Integração Kong + OIDC
+├── INIT-CONTAINERS-CLEANUP.md        ← Sequência de boot e limpeza dos init containers
+├── KEYCLOAK_SETUP_GUIDE.md           ← Configuração do Keycloak (realm, clientes, usuários)
+├── KONG_KEYCLOAK_OIDC.md             ← Integração Kong + JWT RS256 (Keycloak)
 ├── KONG_KEYCLOAK_TESTS.md            ← Testes de integração Kong/Keycloak
-├── VAULT-INITIALIZATION.md           ← Inicialização automática do Vault
+├── VAULT-INITIALIZATION.md           ← Inicialização automática do Vault (secrets)
 └── desafio-arquiteto-software.pdf    ← Especificação original do desafio
 ```
 
@@ -145,6 +146,6 @@ Veja [docker-compose.yml](../docker-compose.yml) para configuração dos serviç
 
 ---
 
-**Versão:** 1.1
+**Versão:** 1.2
 **Status:** Ativo
 **Última atualização:** Maio 2026

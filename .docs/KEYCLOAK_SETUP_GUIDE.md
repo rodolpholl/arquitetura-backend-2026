@@ -2,7 +2,9 @@
 
 ## Objetivo
 
-Configurar Keycloak com realm **fincontrol** e clientes **kong-client** e **fincontrol-api** para integracao com Kong Gateway e as APIs .NET.
+Configurar Keycloak com realm **fincontrol** e cliente **fincontrol-api** para emissão de tokens JWT RS256 validados pelo Kong e pelas APIs .NET.
+
+> **Integração com Kong:** O Kong usa o plugin `jwt` nativo com a chave pública RS256 do Keycloak — não há plugin OIDC. Ver [KONG_KEYCLOAK_OIDC.md](KONG_KEYCLOAK_OIDC.md).
 
 > **Nota:** A configuracao abaixo e feita **automaticamente** pelo container `keycloak-init` ao executar `docker-compose up -d`. Este guia serve para configuracao manual ou para recriar o ambiente em caso de falha do init.
 
@@ -37,63 +39,22 @@ Clique **Create**.
 
 ---
 
-## Passo 2: Criar Cliente Kong (key-auth + OIDC)
-
-### 2.1 - Ir para Clients
+## Passo 2: Criar Cliente fincontrol-api
 
 ```
 Menu esquerdo: Clients > Create client
 ```
 
-### 2.2 - General Settings
-
-| Campo | Valor |
-|-------|-------|
-| **Client ID** | `kong-client` |
-| **Client Protocol** | `openid-connect` |
-
-### 2.3 - Capability Config
-
-```
-[x] Client authentication
-[x] Service accounts roles
-[ ] Standard flow (desabilitar para M2M)
-[x] Direct access grants
-```
-
-### 2.4 - Login Settings
-
-```
-Valid redirect URIs:
-  http://localhost:8000/*
-
-Web Origins:
-  http://localhost:8000
-```
-
-Clique **Save**.
-
-### 2.5 - Obter Client Secret
-
-```
-Aba: Credentials
-Credential type: Client secret
-[Copie o valor gerado]
-```
-
-O `keycloak-init` salva esse secret no Vault automaticamente em `secret/dev/keycloak → kong_client_secret`.
-
----
-
-## Passo 3: Criar Cliente fincontrol-api (Swagger / M2M)
-
-Repita o processo acima com:
-
 | Campo | Valor |
 |-------|-------|
 | **Client ID** | `fincontrol-api` |
+| **Client Protocol** | `openid-connect` |
 | Client authentication | habilitado |
-| Direct access grants | habilitado |
+| Direct access grants | habilitado (para password flow de desenvolvimento) |
+
+Clique **Save**. Na aba **Credentials**, copie o `client_secret` gerado.
+
+O `keycloak-init` salva o secret no Vault em `secret/dev/keycloak → api_client_secret`.
 
 ---
 
@@ -182,13 +143,12 @@ curl -s -X POST http://localhost:8081/realms/fincontrol/protocol/openid-connect/
 ## Checklist de Configuracao
 
 - [ ] Realm "fincontrol" criado
-- [ ] Cliente "kong-client" criado com client authentication habilitado
-- [ ] Cliente "fincontrol-api" criado
-- [ ] Client secrets salvos no Vault (`secret/dev/keycloak`)
+- [ ] Cliente "fincontrol-api" criado com client authentication + direct access grants
+- [ ] Client secret salvo no Vault (`secret/dev/keycloak → api_client_secret`)
 - [ ] Roles `api-user` e `admin` criadas
 - [ ] Usuarios `dev.user` e `dev.admin` criados com senhas permanentes
-- [ ] OIDC discovery retornando issuer correto
-- [ ] Token obtido com sucesso
+- [ ] JWKS retornando chave RS256 (`/realms/fincontrol/protocol/openid-connect/certs`)
+- [ ] Token JWT obtido com sucesso e validado pelo Kong
 
 ---
 
@@ -196,7 +156,7 @@ curl -s -X POST http://localhost:8081/realms/fincontrol/protocol/openid-connect/
 
 | Problema | Solucao |
 |----------|---------|
-| `Invalid client credentials` | Verificar client_secret no Vault: `secret/dev/keycloak → kong_client_secret` |
+| `Invalid client credentials` | Verificar client_secret no Vault: `secret/dev/keycloak → api_client_secret` |
 | Realm nao encontrado | Verificar se e `fincontrol` (nao `master` nem `agile`) |
 | `connection refused` em :8081 | Keycloak ainda inicializando — aguardar healthcheck |
 | Kong nao valida tokens | Issuer no Kong deve ser `http://localhost:8081/realms/fincontrol` |
@@ -204,6 +164,6 @@ curl -s -X POST http://localhost:8081/realms/fincontrol/protocol/openid-connect/
 
 ---
 
-**Versao:** 2.0
+**Versao:** 3.0
 **Ultima atualizacao:** Maio 2026
 **Status:** Ativo (configuracao automatizada via keycloak-init)
