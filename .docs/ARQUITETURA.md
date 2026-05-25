@@ -1367,65 +1367,7 @@ Resultado esperado (Ano 5):
 
 ### Diagrama de Arquitetura
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                          CLIENTE (Browser / App / Postman)                      │
-│                  Authorization: Bearer <JWT Keycloak>                           │
-└──────────────────────────────────┬──────────────────────────────────────────────┘
-                                   │ HTTP
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                      KONG API GATEWAY  (porta 8000)                             │
-│                                                                                 │
-│  POST /lancamentos/registrar          GET /consolidados/saldo?data-lancamento=  │
-│  ├─ [jwt] Valida RS256 c/ Keycloak    ├─ [jwt] Valida RS256 c/ Keycloak        │
-│  ├─ [rate-limiting] 300 req/min       ├─ [proxy-cache] 30s GET cache           │
-│  ├─ [request-transformer]             ├─ [rate-limiting] 55 req/s              │
-│  │    Injeta X-Subscription-Key       └─ [request-transformer]                 │
-│  └─ [correlation-id]                       Injeta X-Subscription-Key           │
-└──────────┬─────────────────────────────────────────┬───────────────────────────┘
-           │ upstream :5083                           │ upstream :5260
-           ▼                                         ▼
-┌──────────────────────────┐             ┌──────────────────────────┐
-│  FinControl.Lancamentos  │             │  FinControl.Consolidado  │
-│         .API             │             │           .API           │
-│                          │             │                          │
-│  Wolverine HTTP Handler  │             │  Wolverine HTTP Handler  │
-│  SubscriptionKeyMiddl.   │             │  SubscriptionKeyMiddl.   │
-│  FluentValidation        │             │                          │
-│  Idempotência (UUID)     │             │  Redis GET saldo         │
-│                          │             │  → 200 / 404             │
-│  BEGIN TX                │             └──────────────────────────┘
-│   INSERT lancamentos     │                         ▲
-│   INSERT outbox_messages │                         │ (cache populado pelo Worker)
-│  COMMIT                  │                         │
-│                          │             ┌──────────────────────────┐
-│  (BackgroundService)     │             │  FinControl.Consolidado  │
-│  OutboxRelayService      │             │         .Worker          │
-│  Polly retry 3×          │             │                          │
-│  RabbitMqPublisher ──────┼──────────── │  LancamentoRegistrado    │
-└──────────────────────────┘   RabbitMQ  │  Consumer                │
-           │                  ←eventos→  │  AcquireLock (Redis)     │
-           │                             │  Recalcula saldo         │
-           ▼                             │  SET Redis (TTL 30d)     │
-┌──────────────────────────┐             └──────────────────────────┘
-│       PostgreSQL 16       │                         │
-│                          │             ┌────────────▼─────────────┐
-│  schema: lancamentos      │             │         Redis 7           │
-│  ├─ lancamentos           │             │                          │
-│  └─ outbox_messages       │             │  saldo:consolidado:{dt}  │
-└──────────────────────────┘             └──────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                         INFRAESTRUTURA DE APOIO                                 │
-│                                                                                 │
-│  Keycloak :8081  ──── JWT RS256 ────►  Kong (chave pública do realm)            │
-│  Vault :8200     ──── Secrets ──────►  Todas as APIs (VaultConfigurationProvider│
-│  Prometheus :9090 ─── Scraping ─────►  /metrics (ambas as APIs)                │
-│  Grafana :3000   ──── Dashboards ───►  Prometheus datasource                   │
-│  Jaeger :16686   ──── Traces ───────►  OTLP (OpenTelemetry)                    │
-└─────────────────────────────────────────────────────────────────────────────────┘
-```
+![Diagrama de Componentes - FinControl](Diagrama%20de%20componentes%20do%20projeto%20FinControl.drawio.png)
 
 ### Por que esta abordagem?
 

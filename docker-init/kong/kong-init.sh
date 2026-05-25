@@ -184,6 +184,7 @@ kong_upsert_plugin "services" "fincontrol-lancamentos" "jwt"
 
 # Plugin: Rate limiting
 kong_upsert_plugin "services" "fincontrol-lancamentos" "rate-limiting" \
+  --data "config.second=10" \
   --data "config.minute=300" \
   --data "config.policy=local" \
   --data "config.fault_tolerant=true" \
@@ -269,7 +270,7 @@ echo ""
 echo "  [Lancamentos — escrita]"
 echo "    POST  http://localhost:8000/lancamentos/registrar"
 echo "    → upstream: host.docker.internal:5083"
-echo "    → plugins: jwt, rate-limiting (300 req/min), correlation-id,"
+echo "    → plugins: jwt, rate-limiting (10 req/s / 300 req/min), correlation-id,"
 echo "               request-size-limiting, request-transformer (injeta X-Subscription-Key)"
 echo ""
 echo "  [Consolidados — leitura]"
