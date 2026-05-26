@@ -9,8 +9,9 @@ public class AtualizarSaldoConsolidadoCommandHandler(
     IRedisLockService lockService,
     ILogger<AtualizarSaldoConsolidadoCommandHandler> logger)
 {
+    private const string CACHE_KEY_ACUMULADO = "saldo:consolidado:acumulado";
+
     private static string CacheKey(DateOnly data) => $"saldo:consolidado:{data:yyyy-MM-dd}";
-    private static string _cacheKeyTotalAcumoulado = $"saldo:consolidado:acumulado";
     private static string LockKey(DateOnly data) => $"lock:saldo:consolidado:{data:yyyy-MM-dd}";
 
     public async Task Handle(
@@ -27,11 +28,11 @@ public class AtualizarSaldoConsolidadoCommandHandler(
             {
 
                 //Atualizandoo saldo Acumulado
-                var keyTotalAcumulado = await cache.GetAsync<SaldoConsolidado>(_cacheKeyTotalAcumoulado, cancellationToken);
+                var keyTotalAcumulado = await cache.GetAsync<SaldoConsolidado>(CACHE_KEY_ACUMULADO, cancellationToken);
 
                 var valorSaldoConsolidado = (keyTotalAcumulado?.Saldo ?? 0) + command.ValorLancamento;
 
-                await cache.SetAsync(_cacheKeyTotalAcumoulado, new SaldoConsolidado(
+                await cache.SetAsync(CACHE_KEY_ACUMULADO, new SaldoConsolidado(
                     Saldo: valorSaldoConsolidado,
                     UltimaAtualizacao: DateTimeOffset.UtcNow), null, cancellationToken);
 

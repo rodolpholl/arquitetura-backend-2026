@@ -136,6 +136,7 @@ Veja [docker-compose.yml](../docker-compose.yml) para configuração dos serviç
 ├── KEYCLOAK_SETUP_GUIDE.md           ← Configuração do Keycloak (realm, clientes, usuários)
 ├── KONG_KEYCLOAK_OIDC.md             ← Integração Kong + JWT RS256 (Keycloak)
 ├── KONG_KEYCLOAK_TESTS.md            ← Testes de integração Kong/Keycloak
+├── REFRESH_TOKEN_FLOW.md             ← Ciclo de vida dos tokens JWT e fluxo de refresh no cliente
 ├── VAULT-INITIALIZATION.md           ← Inicialização automática do Vault (secrets)
 └── desafio-arquiteto-software.pdf    ← Especificação original do desafio
 ```

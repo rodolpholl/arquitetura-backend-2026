@@ -1,12 +1,9 @@
-using FluentAssertions;
-using Microsoft.Extensions.Caching.Distributed;
-using Microsoft.Extensions.Logging.Abstractions;
-using Moq;
 using System.Text.Json;
 using FinControl.Consolidado.Core.Domain;
 using FinControl.Consolidado.Core.Features.Queries.GetSaldoConsolidado;
 using FinControl.Consolidado.Tests.Fakers;
 using FinControl.Infrastructure.Cache;
+using Microsoft.Extensions.Caching.Distributed;
 
 namespace FinControl.Consolidado.Tests.Features.Queries;
 
@@ -15,25 +12,45 @@ public class GetSaldoConsolidadoQueryHandlerTests
     private static readonly JsonSerializerOptions JsonOpts =
         new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    private static RedisCacheService CacheService(Mock<IDistributedCache> mock) =>
-        new(mock.Object, NullLogger<RedisCacheService>.Instance);
-
     private static byte[] ToBytes<T>(T value) =>
         JsonSerializer.SerializeToUtf8Bytes(value, JsonOpts);
 
-    private static GetSaldoConsolidadoQueryHandler CreateHandler(Mock<IDistributedCache> cacheMock) =>
-        new(CacheService(cacheMock),
-            NullLogger<GetSaldoConsolidadoQueryHandler>.Instance);
+    private static RedisCacheService CacheService(Mock<IDistributedCache> mock) =>
+        new(mock.Object, NullLogger<RedisCacheService>.Instance);
 
-    // ── Cache hit ────────────────────────────────────────────────────────────
+    private static GetSaldoConsolidadoQueryHandler CreateHandler(Mock<IDistributedCache> cacheMock) =>
+        new(CacheService(cacheMock), NullLogger<GetSaldoConsolidadoQueryHandler>.Instance);
+
+    // Mock que retorna dados apenas para a chave informada; null para todo o resto
+    private static Mock<IDistributedCache> MockComChave(string chave, SaldoConsolidado saldo)
+    {
+        var m = new Mock<IDistributedCache>();
+        m.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<string, CancellationToken>((key, _) =>
+                key == chave
+                    ? Task.FromResult<byte[]?>(ToBytes(saldo))
+                    : Task.FromResult<byte[]?>(null));
+        return m;
+    }
+
+    private static Mock<IDistributedCache> MockVazio()
+    {
+        var m = new Mock<IDistributedCache>();
+        m.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((byte[]?)null);
+        m.Setup(c => c.SetAsync(It.IsAny<string>(), It.IsAny<byte[]>(),
+            It.IsAny<DistributedCacheEntryOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        return m;
+    }
+
+    // ── Saldo acumulado (sem data) ────────────────────────────────────────────
 
     [Fact]
-    public async Task Deve_Retornar_Saldo_Quando_Existe_No_Cache()
+    public async Task Deve_Retornar_Saldo_Acumulado_Quando_Cache_Contem_Dado()
     {
         var saldo = SaldoConsolidadoFaker.Positivo(15000);
-        var cacheMock = new Mock<IDistributedCache>();
-        cacheMock.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                 .ReturnsAsync(ToBytes(saldo));
+        var cacheMock = MockComChave("saldo:consolidado:acumulado", saldo);
 
         var response = await CreateHandler(cacheMock)
             .Handle(new GetSaldoConsolidadoQuery(), CancellationToken.None);
@@ -42,12 +59,186 @@ public class GetSaldoConsolidadoQueryHandlerTests
     }
 
     [Fact]
+    public async Task Deve_Consultar_Chave_Acumulada_Quando_Data_Nao_Informada()
+    {
+        var cacheMock = MockVazio();
+
+        await CreateHandler(cacheMock)
+            .Handle(new GetSaldoConsolidadoQuery(), CancellationToken.None);
+
+        cacheMock.Verify(c => c.GetAsync(
+            "saldo:consolidado:acumulado",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Deve_Retornar_Zero_Quando_Saldo_Acumulado_Nao_Esta_No_Cache()
+    {
+        var response = await CreateHandler(MockVazio())
+            .Handle(new GetSaldoConsolidadoQuery(), CancellationToken.None);
+
+        response.Saldo.Should().Be(0);
+        response.SaldoDecimal.Should().Be(0m);
+    }
+
+    // ── Saldo por data específica — cache hit ─────────────────────────────────
+
+    [Fact]
+    public async Task Deve_Retornar_Saldo_Da_Data_Quando_Existe_No_Cache()
+    {
+        var data = new DateOnly(2026, 5, 23);
+        var saldo = SaldoConsolidadoFaker.Positivo(8500);
+        var cacheMock = MockComChave("saldo:consolidado:2026-05-23", saldo);
+
+        var response = await CreateHandler(cacheMock)
+            .Handle(new GetSaldoConsolidadoQuery(data), CancellationToken.None);
+
+        response.Saldo.Should().Be(8500);
+    }
+
+    [Fact]
+    public async Task Deve_Consultar_Cache_Com_Data_Especifica_Formatada()
+    {
+        var data = new DateOnly(2026, 5, 23);
+        var cacheMock = MockVazio();
+
+        await CreateHandler(cacheMock)
+            .Handle(new GetSaldoConsolidadoQuery(data), CancellationToken.None);
+
+        cacheMock.Verify(c => c.GetAsync(
+            "saldo:consolidado:2026-05-23",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── Fallback — busca dias anteriores ──────────────────────────────────────
+
+    [Fact]
+    public async Task Deve_Buscar_Dia_Anterior_Quando_Data_Nao_Encontrada_No_Cache()
+    {
+        var data = new DateOnly(2026, 5, 23);
+        var saldoOntem = SaldoConsolidadoFaker.Positivo(5000);
+        var cacheMock = MockComChave("saldo:consolidado:2026-05-22", saldoOntem);
+
+        var response = await CreateHandler(cacheMock)
+            .Handle(new GetSaldoConsolidadoQuery(data), CancellationToken.None);
+
+        response.Saldo.Should().Be(5000);
+    }
+
+    [Fact]
+    public async Task Deve_Retornar_Saldo_Do_Primeiro_Dia_Anterior_Com_Dado()
+    {
+        // Há dados 3 dias atrás, mas não 1 ou 2 dias atrás
+        var data = new DateOnly(2026, 5, 23);
+        var saldo3DiasAtras = SaldoConsolidadoFaker.Positivo(12000);
+        var cacheMock = MockComChave("saldo:consolidado:2026-05-20", saldo3DiasAtras);
+
+        var response = await CreateHandler(cacheMock)
+            .Handle(new GetSaldoConsolidadoQuery(data), CancellationToken.None);
+
+        response.Saldo.Should().Be(12000);
+    }
+
+    [Fact]
+    public async Task Deve_Propagar_Saldo_Encontrado_Para_Data_Requisitada()
+    {
+        var data = new DateOnly(2026, 5, 23);
+        var saldoOntem = SaldoConsolidadoFaker.Positivo(7000);
+        var cacheMock = MockComChave("saldo:consolidado:2026-05-22", saldoOntem);
+
+        cacheMock.Setup(c => c.SetAsync(
+            It.IsAny<string>(), It.IsAny<byte[]>(),
+            It.IsAny<DistributedCacheEntryOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await CreateHandler(cacheMock)
+            .Handle(new GetSaldoConsolidadoQuery(data), CancellationToken.None);
+
+        // O saldo encontrado ontem deve ser propagado para a chave da data requisitada
+        cacheMock.Verify(c => c.SetAsync(
+            "saldo:consolidado:2026-05-23",
+            It.IsAny<byte[]>(),
+            It.IsAny<DistributedCacheEntryOptions>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Deve_Propagar_Com_TTL_De_30_Dias()
+    {
+        var data = new DateOnly(2026, 5, 23);
+        var saldoOntem = SaldoConsolidadoFaker.Positivo(7000);
+        var cacheMock = MockComChave("saldo:consolidado:2026-05-22", saldoOntem);
+
+        DistributedCacheEntryOptions? capturedOpts = null;
+        cacheMock.Setup(c => c.SetAsync(
+            "saldo:consolidado:2026-05-23", It.IsAny<byte[]>(),
+            It.IsAny<DistributedCacheEntryOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<string, byte[], DistributedCacheEntryOptions, CancellationToken>(
+                (_, _, opts, _) => capturedOpts = opts)
+            .Returns(Task.CompletedTask);
+
+        await CreateHandler(cacheMock)
+            .Handle(new GetSaldoConsolidadoQuery(data), CancellationToken.None);
+
+        capturedOpts!.AbsoluteExpirationRelativeToNow.Should().Be(TimeSpan.FromDays(30));
+    }
+
+    [Fact]
+    public async Task Deve_Tentar_No_Maximo_30_Dias_Anteriores_No_Fallback()
+    {
+        // Todos os 31 GetAsync (1 para a data + 30 fallback) devem retornar null
+        var data = new DateOnly(2026, 5, 23);
+        var cacheMock = MockVazio();
+
+        await CreateHandler(cacheMock)
+            .Handle(new GetSaldoConsolidadoQuery(data), CancellationToken.None);
+
+        // 1 chamada para a data requisitada + 30 tentativas de fallback = 31 total
+        cacheMock.Verify(c => c.GetAsync(
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(31));
+    }
+
+    [Fact]
+    public async Task Deve_Parar_Fallback_No_Primeiro_Dia_Com_Saldo()
+    {
+        // Dados disponíveis 1 dia atrás — deve parar imediatamente, sem tentar os 29 dias restantes
+        var data = new DateOnly(2026, 5, 23);
+        var saldoOntem = SaldoConsolidadoFaker.Positivo(3000);
+        var cacheMock = MockComChave("saldo:consolidado:2026-05-22", saldoOntem);
+
+        cacheMock.Setup(c => c.SetAsync(It.IsAny<string>(), It.IsAny<byte[]>(),
+            It.IsAny<DistributedCacheEntryOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await CreateHandler(cacheMock)
+            .Handle(new GetSaldoConsolidadoQuery(data), CancellationToken.None);
+
+        // 1 para a data requisitada + 1 para ontem (hit) = 2 chamadas no total
+        cacheMock.Verify(c => c.GetAsync(
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task Deve_Retornar_Saldo_Zero_Quando_Nenhum_Dado_Nos_Ultimos_30_Dias()
+    {
+        var data = new DateOnly(2026, 5, 23);
+
+        var response = await CreateHandler(MockVazio())
+            .Handle(new GetSaldoConsolidadoQuery(data), CancellationToken.None);
+
+        response.Saldo.Should().Be(0);
+        response.SaldoDecimal.Should().Be(0m);
+    }
+
+    // ── Conversão de unidade ──────────────────────────────────────────────────
+
+    [Fact]
     public async Task Deve_Converter_Centavos_Para_Decimal_Corretamente()
     {
         var saldo = new SaldoConsolidado(15550, DateTimeOffset.UtcNow);
-        var cacheMock = new Mock<IDistributedCache>();
-        cacheMock.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                 .ReturnsAsync(ToBytes(saldo));
+        var cacheMock = MockComChave("saldo:consolidado:acumulado", saldo);
 
         var response = await CreateHandler(cacheMock)
             .Handle(new GetSaldoConsolidadoQuery(), CancellationToken.None);
@@ -56,82 +247,28 @@ public class GetSaldoConsolidadoQueryHandlerTests
     }
 
     [Fact]
-    public async Task Deve_Retornar_UltimaAtualizacao_Do_Cache()
-    {
-        var quando = DateTimeOffset.UtcNow.AddMinutes(-10);
-        var saldo = new SaldoConsolidado(1000, quando);
-        var cacheMock = new Mock<IDistributedCache>();
-        cacheMock.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                 .ReturnsAsync(ToBytes(saldo));
-
-        var response = await CreateHandler(cacheMock)
-            .Handle(new GetSaldoConsolidadoQuery(), CancellationToken.None);
-
-        response.UltimaAtualizacao.Should().BeCloseTo(quando, TimeSpan.FromSeconds(1));
-    }
-
-    // ── Cache miss ───────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task Deve_Retornar_Saldo_Zero_Quando_Cache_Vazio()
-    {
-        var cacheMock = new Mock<IDistributedCache>();
-        cacheMock.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                 .ReturnsAsync((byte[]?)null);
-
-        var response = await CreateHandler(cacheMock)
-            .Handle(new GetSaldoConsolidadoQuery(), CancellationToken.None);
-
-        response.Saldo.Should().Be(0);
-        response.SaldoDecimal.Should().Be(0m);
-    }
-
-    // ── Chave de cache ───────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task Deve_Consultar_Cache_Com_Data_Especifica_Formatada()
-    {
-        var data = new DateOnly(2026, 5, 23);
-        var expectedKey = "saldo:consolidado:2026-05-23";
-
-        var cacheMock = new Mock<IDistributedCache>();
-        cacheMock.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                 .ReturnsAsync((byte[]?)null);
-
-        await CreateHandler(cacheMock).Handle(new GetSaldoConsolidadoQuery(data), CancellationToken.None);
-
-        cacheMock.Verify(c => c.GetAsync(expectedKey, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task Deve_Consultar_Cache_Com_Data_De_Hoje_Quando_Nao_Informada()
-    {
-        var hoje = DateOnly.FromDateTime(DateTime.UtcNow);
-        var keyHoje = $"saldo:consolidado:{hoje:yyyy-MM-dd}";
-
-        var cacheMock = new Mock<IDistributedCache>();
-        cacheMock.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                 .ReturnsAsync((byte[]?)null);
-
-        await CreateHandler(cacheMock).Handle(new GetSaldoConsolidadoQuery(), CancellationToken.None);
-
-        cacheMock.Verify(c => c.GetAsync(keyHoje, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    // ── Saldo negativo ───────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task Deve_Retornar_Saldo_Negativo_Quando_Cache_Contem_Debito_Maior()
+    public async Task Deve_Retornar_Saldo_Negativo_Quando_Debitos_Superam_Creditos()
     {
         var saldo = SaldoConsolidadoFaker.Negativo(-5000);
-        var cacheMock = new Mock<IDistributedCache>();
-        cacheMock.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                 .ReturnsAsync(ToBytes(saldo));
+        var cacheMock = MockComChave("saldo:consolidado:acumulado", saldo);
 
         var response = await CreateHandler(cacheMock)
             .Handle(new GetSaldoConsolidadoQuery(), CancellationToken.None);
 
         response.Saldo.Should().BeNegative();
         response.SaldoDecimal.Should().BeNegative();
+    }
+
+    [Fact]
+    public async Task Deve_Retornar_UltimaAtualizacao_Do_Cache()
+    {
+        var quando = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var saldo = new SaldoConsolidado(1000, quando);
+        var cacheMock = MockComChave("saldo:consolidado:acumulado", saldo);
+
+        var response = await CreateHandler(cacheMock)
+            .Handle(new GetSaldoConsolidadoQuery(), CancellationToken.None);
+
+        response.UltimaAtualizacao.Should().BeCloseTo(quando, TimeSpan.FromSeconds(1));
     }
 }

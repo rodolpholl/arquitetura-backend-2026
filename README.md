@@ -13,6 +13,7 @@ ASP.NET Core 10 | Wolverine 5.39 | Vertical Slice + CQRS + Event-Driven
 | [ARQUITETURA.md](.docs/ARQUITETURA.md) | Decisões técnicas, stack, volumetria |
 | [CONVENCOES.md](.docs/CONVENCOES.md) | Premissas e convenções do projeto |
 | [PROGRESSO.md](.docs/PROGRESSO.md) | Status e roadmap |
+| [REFRESH_TOKEN_FLOW.md](.docs/REFRESH_TOKEN_FLOW.md) | Ciclo de vida dos tokens JWT e fluxo de refresh |
 
 ---
 
@@ -68,7 +69,7 @@ Serviços levantados:
 # Build da solução completa
 dotnet build
 
-# Todos os testes (64 testes: 48 Lancamentos + 16 Consolidado)
+# Todos os testes (83 testes: 48 Lancamentos + 35 Consolidado)
 dotnet test
 
 # Apenas os testes de Lançamentos
@@ -193,10 +194,10 @@ O sistema usa dois fatores de autenticação no Kong:
 curl -s -X POST http://localhost:8081/realms/fincontrol/protocol/openid-connect/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=password" \
-  -d "client_id=fincontrol-api" \
-  -d "client_secret=fincontrol-api-secret" \
-  -d "username=dev.user" \
-  -d "password=Dev@123456!" \
+  -d "client_id=fincontrol-backend" \
+  -d "client_secret=fincontrol-backend-secret-12345" \
+  -d "username=admin.fincontrol" \
+  -d "password=Admin@123456" \
   | jq -r '.access_token'
 ```
 
@@ -231,7 +232,7 @@ src/
 │       └── FinControl.Consolidado.Worker/ # Consumer RabbitMQ (reconexão exponencial 5s→60s)
 └── tests/
     ├── FinControl.Lancamentos.Tests/  # xUnit + Moq + Bogus — 48 testes
-    ├── FinControl.Consolidado.Tests/  # xUnit + Moq + Bogus — 16 testes
+    ├── FinControl.Consolidado.Tests/  # xUnit + Moq + Bogus — 35 testes
     └── FinControl.StressTests/        # NBomber 5.5.0 — execução manual (dotnet run)
 
 docker-init/
@@ -259,6 +260,6 @@ docker-init/
 | Métricas | Prometheus (`prometheus-net`) + Grafana 11 |
 | Logs | Serilog + Grafana Loki (CorrelationId enriquecido) |
 | Documentação API | Scalar UI (OpenAPI — ambas as APIs) |
-| Testes unitários | xUnit + Moq + Bogus + FluentAssertions (64 testes) |
+| Testes unitários | xUnit + Moq + Bogus + FluentAssertions (83 testes) |
 | Stress Test | NBomber 5.5.0 — relatórios HTML + Markdown |
 | Padrão | Vertical Slice + CQRS + Event-Driven + DDD |

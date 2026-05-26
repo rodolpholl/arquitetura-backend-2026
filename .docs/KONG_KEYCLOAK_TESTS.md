@@ -68,7 +68,7 @@ $params = @{
     Uri     = "http://localhost:8081/realms/fincontrol/protocol/openid-connect/token"
     Method  = "POST"
     Headers = @{"Content-Type" = "application/x-www-form-urlencoded"}
-    Body    = "client_id=fincontrol-api&client_secret=fincontrol-api-secret&grant_type=password&username=dev.user&password=Dev@123456!"
+    Body    = "client_id=fincontrol-backend&client_secret=fincontrol-backend-secret-12345&grant_type=password&username=admin.fincontrol&password=Admin@123456"
 }
 $TOKEN = (Invoke-WebRequest @params).Content | ConvertFrom-Json | Select-Object -ExpandProperty access_token
 Write-Host "Token: $($TOKEN.Substring(0,50))..."
@@ -79,7 +79,7 @@ Write-Host "Token: $($TOKEN.Substring(0,50))..."
 TOKEN=$(curl -s -X POST \
   http://localhost:8081/realms/fincontrol/protocol/openid-connect/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=fincontrol-api&client_secret=fincontrol-api-secret&grant_type=password&username=dev.user&password=Dev@123456!" \
+  -d "client_id=fincontrol-backend&client_secret=fincontrol-backend-secret-12345&grant_type=password&username=admin.fincontrol&password=Admin@123456" \
   | jq -r '.access_token')
 echo "Token: ${TOKEN:0:50}..."
 ```

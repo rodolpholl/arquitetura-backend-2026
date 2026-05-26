@@ -36,7 +36,7 @@
 | **Kong JWT (RS256 + Keycloak)** | ✅ Configurado | Chave pública Keycloak registrada como credencial JWT no Kong |
 | **Grafana Dashboard** | ✅ Provisionado | Dashboard HTTP provisionado via JSON (`fincontrol-http-v1`) |
 | **Prometheus /metrics** | ✅ Funcional | `prometheus-net` expõe métricas em `/metrics` (ambas as APIs) |
-| **Testes automatizados** | ✅ 64 testes | 48 (Lancamentos) + 16 (Consolidado), zero falhas |
+| **Testes automatizados** | ✅ 83 testes | 48 (Lancamentos) + 35 (Consolidado), zero falhas |
 | **FinControl.StressTests** | ✅ Implementado | NBomber 5.5.0 — 50 req/s (Consolidado) + 10 req/s (Lancamentos) em paralelo; JWT auto-fetch do Keycloak; relatórios HTML + Markdown |
 
 ### O que está em aberto (roadmap)
@@ -590,30 +590,41 @@ public class AtualizarSaldoConsolidadoCommandHandler(
     IRedisLockService lockService,
     ILogger<AtualizarSaldoConsolidadoCommandHandler> logger)
 {
+    private const string CACHE_KEY_ACUMULADO = "saldo:consolidado:acumulado";
+
     private static string CacheKey(DateOnly data) => $"saldo:consolidado:{data:yyyy-MM-dd}";
     private static string LockKey(DateOnly data)  => $"lock:saldo:consolidado:{data:yyyy-MM-dd}";
 
     public async Task Handle(AtualizarSaldoConsolidadoCommand command, CancellationToken ct = default)
     {
-        // Usa a data do LANÇAMENTO — não UtcNow — para consolidar no dia correto
+        // Usa a data do lançamento — não a data atual — para consolidar no dia correto
         var data = DateOnly.FromDateTime(command.DataLancamento.UtcDateTime);
+        var key   = CacheKey(data);
 
         var acquired = await lockService.ExecuteWithLockAsync(
             lockKey: LockKey(data),
             action: async () =>
             {
-                var atual = await cache.GetAsync<SaldoConsolidado>(CacheKey(data), ct);
+                // Atualiza o saldo acumulado (corrido)
+                var acumulado = await cache.GetAsync<SaldoConsolidado>(CACHE_KEY_ACUMULADO, ct);
+                var valorAcumulado = (acumulado?.Saldo ?? 0) + command.ValorLancamento;
+                await cache.SetAsync(CACHE_KEY_ACUMULADO,
+                    new SaldoConsolidado(valorAcumulado, DateTimeOffset.UtcNow), null, ct);
+
+                // Atualiza o saldo do dia específico
+                var atual = await cache.GetAsync<SaldoConsolidado>(key, ct);
                 var novoSaldo = new SaldoConsolidado(
-                    Saldo: (atual?.Saldo ?? 0) + command.ValorLancamento,
+                    Saldo: valorAcumulado,
                     UltimaAtualizacao: DateTimeOffset.UtcNow);
-                await cache.SetAsync(CacheKey(data), novoSaldo, TimeSpan.FromDays(30), ct);
+                await cache.SetAsync(key, novoSaldo, TimeSpan.FromDays(30), ct);
             },
             lockExpiry: TimeSpan.FromSeconds(10),
             ct: ct);
 
         if (!acquired)
             throw new InvalidOperationException(
-                $"Nao foi possivel adquirir lock para {data:yyyy-MM-dd}. Sera reprocessado.");
+                $"Nao foi possivel adquirir lock de consolidacao para o dia {data:yyyy-MM-dd}. " +
+                "O evento sera reprocessado pelo message broker.");
     }
 }
 ```
@@ -1899,11 +1910,12 @@ arquitetura-backend-2026/
 │   │       ├── RegistrarLancamentoCommandHandlerTests.cs   (12 testes)
 │   │       └── RegistrarLancamentoCommandValidatorTests.cs (27 testes)
 │   │
-│   ├── FinControl.Consolidado.Tests/          ← 16 testes
+│   ├── FinControl.Consolidado.Tests/          ← 35 testes
 │   │   ├── Fakers/SaldoConsolidadoFaker.cs
 │   │   └── Features/
 │   │       ├── Commands/AtualizarSaldoConsolidaoCommandHandlerTests.cs (9 testes)
-│   │       └── Queries/GetSaldoConsolidadoQueryHandlerTests.cs         (7 testes)
+│   │       ├── Queries/GetSaldoConsolidadoQueryHandlerTests.cs         (15 testes)
+│   │       └── ConsolidadoRegrasDenegocioTests.cs                      (12 testes — regras funcionais)
 │   │
 │   └── FinControl.StressTests/                ← Teste de carga manual (NBomber)
 │       ├── Scenarios/
@@ -3958,7 +3970,7 @@ graph TB
 |-----------|----------|------|
 | Desenho da solução documentado | ✅ | Este documento + diagrama estrutural acima |
 | Implementação em C# | ✅ | .NET 10, ASP.NET Core Minimal APIs, C# 12 |
-| Testes automatizados | ✅ | 64 testes (48 Lancamentos + 16 Consolidado), xUnit + Moq + FluentAssertions |
+| Testes automatizados | ✅ | 83 testes (48 Lancamentos + 35 Consolidado), xUnit + Moq + FluentAssertions |
 | Boas práticas (Design Patterns, SOLID, Arquitetura) | ✅ | CQRS, Vertical Slicing, Outbox, Repository, DI, async/await correto |
 | README com instruções de execução | ✅ | README.md na raiz + guias em .docs/ |
 | Hospedagem em repositório público | ✅ | GitHub público |
@@ -3998,9 +4010,9 @@ graph TB
 ### Resultado: `dotnet test`
 
 ```
-Passed: 64   Failed: 0   Skipped: 0
+Passed: 83   Failed: 0   Skipped: 0
   FinControl.Lancamentos.Tests  →  48 testes
-  FinControl.Consolidado.Tests  →  16 testes
+  FinControl.Consolidado.Tests  →  35 testes
 ```
 
 ### Detalhamento por Classe
@@ -4013,12 +4025,13 @@ Passed: 64   Failed: 0   Skipped: 0
 | `Features/Commands/RegistrarLancamentoCommandHandlerTests.cs` | 12 | Persistência no banco (InMemory EF Core); geração de `NavigationId` e `CriadoEm`; campos persistidos (Valor/Modalidade/Descricao); data padrão (hoje) vs data informada; **atomicidade Outbox** (1 `OutboxMessage` por lançamento); `Exchange`/`RoutingKey`/`MessageType` do Outbox; payload com `Valor` e `CorrelationId`; `DeliveredAt=null` após insert; múltiplos lançamentos (3 de cada) |
 | `Features/Commands/RegistrarLancamentoCommandValidatorTests.cs` | 27 | Vendas com valor positivo (Theory×2); débitos com valor negativo (Theory×4); Outros exige `Descricao`; modalidade inválida; valor excede máximo (R$10M); valor positivo para débito (Theory×4); valor negativo para crédito (Theory×2); Outros sem descrição; descrição >500 chars; data >1 dia no futuro; data >1 ano no passado; `UsuarioId` vazio/curto; `UsuarioNome` vazio/>200 chars; e-mail inválido/vazio; `IdempotencyKey=Empty`; `CorrelationId=Empty` |
 
-#### FinControl.Consolidado.Tests (16 testes)
+#### FinControl.Consolidado.Tests (35 testes)
 
 | Arquivo | Testes | O que cobre |
 |---------|--------|-------------|
 | `Features/Commands/AtualizarSaldoConsolidaoCommandHandlerTests.cs` | 9 | Saldo inicial (cache vazio→zera antes de somar); acumulação sobre saldo existente; decrementação (saldo pode ficar negativo); TTL 30 dias no Redis; chave de cache usa `dataLancamento`; data retroativa atualiza a chave correta; `UltimaAtualizacao` atualizada; lock distribuído (`IRedisLockService`) invocado para cada atualização |
-| `Features/Queries/GetSaldoConsolidadoQueryHandlerTests.cs` | 7 | Retorna saldo do cache; conversão centavos→decimal (`155→1.55m`); `UltimaAtualizacao` retornada; cache vazio retorna saldo 0; chave formatada com data específica; chave default (hoje quando `dataLancamento=null`); saldo negativo representado corretamente |
+| `Features/Queries/GetSaldoConsolidadoQueryHandlerTests.cs` | 15 | Saldo acumulado (`saldo:consolidado:acumulado`); saldo por data específica (cache hit); fallback para dias anteriores (até 30 dias); propagação do saldo encontrado para a data requisitada; TTL de 30 dias na propagação; limite exato de 31 chamadas no fallback; parada antecipada quando saldo encontrado; saldo zero quando nenhum dado em 30 dias; conversão centavos→decimal; saldo negativo; `UltimaAtualizacao` retornada |
+| `Features/ConsolidadoRegrasDenegocioTests.cs` | 12 | **Testes funcionais end-to-end** (Command + Query com `CacheEmMemoria`): zero sem lançamentos (acumulado e por data); crédito aumenta saldo; múltiplos créditos acumulam; débito reduz saldo; débitos > créditos = saldo negativo; saldo acumulado reflete todos os lançamentos; consultas independentes (acumulado vs. diário); consulta por data específica; fallback para dia anterior sem lançamentos; lançamento retroativo; precisão monetária centavos→reais |
 
 ### O Que Está Coberto
 
@@ -4040,7 +4053,7 @@ Passed: 64   Failed: 0   Skipped: 0
 | `LancamentoRegistradoConsumer` | Sem testes | Consumer RabbitMQ do Worker — processamento de mensagem, chamada ao handler, ack/nack não verificados |
 | Detecção de duplicata (idempotência) | Sem testes | `VerificarIdempotenciaAsync` existe no handler mas nenhum teste envia o mesmo `IdempotencyKey` duas vezes para verificar o 409 |
 
-> **Conclusão:** Os 64 testes cobrem toda a lógica de negócio e regras de domínio. As lacunas estão concentradas em componentes de infraestrutura (`OutboxRelayService`, `RabbitMqPublisher`) e integração (`SubscriptionKeyMiddleware`, `Consumer`) — candidatos naturais para testes de integração com Testcontainers em uma próxima iteração.
+> **Conclusão:** Os 83 testes cobrem toda a lógica de negócio e regras de domínio. As lacunas estão concentradas em componentes de infraestrutura (`OutboxRelayService`, `RabbitMqPublisher`) e integração (`SubscriptionKeyMiddleware`, `Consumer`) — candidatos naturais para testes de integração com Testcontainers em uma próxima iteração.
 
 ---
 
@@ -4119,4 +4132,4 @@ Passed: 64   Failed: 0   Skipped: 0
 
 **Versão:** 3.1  
 **Última atualização:** Maio 2026  
-**Status:** ✅ Implementação em produção — 64 testes passando, zero falhas; stress test NBomber implementado
+**Status:** ✅ Implementação em produção — 83 testes passando, zero falhas; stress test NBomber implementado

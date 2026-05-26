@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Configurar Keycloak com realm **fincontrol** e cliente **fincontrol-api** para emissão de tokens JWT RS256 validados pelo Kong e pelas APIs .NET.
+Configurar Keycloak com realm **fincontrol** e cliente **fincontrol-backend** para emissão de tokens JWT RS256 validados pelo Kong e pelas APIs .NET.
 
 > **Integração com Kong:** O Kong usa o plugin `jwt` nativo com a chave pública RS256 do Keycloak — não há plugin OIDC. Ver [KONG_KEYCLOAK_OIDC.md](KONG_KEYCLOAK_OIDC.md).
 
@@ -39,7 +39,7 @@ Clique **Create**.
 
 ---
 
-## Passo 2: Criar Cliente fincontrol-api
+## Passo 2: Criar Cliente fincontrol-backend
 
 ```
 Menu esquerdo: Clients > Create client
@@ -47,12 +47,12 @@ Menu esquerdo: Clients > Create client
 
 | Campo | Valor |
 |-------|-------|
-| **Client ID** | `fincontrol-api` |
+| **Client ID** | `fincontrol-backend` |
 | **Client Protocol** | `openid-connect` |
 | Client authentication | habilitado |
 | Direct access grants | habilitado (para password flow de desenvolvimento) |
 
-Clique **Save**. Na aba **Credentials**, copie o `client_secret` gerado.
+Clique **Save**. Na aba **Credentials**, defina o secret como `fincontrol-backend-secret-12345`.
 
 O `keycloak-init` salva o secret no Vault em `secret/dev/keycloak → api_client_secret`.
 
@@ -73,35 +73,20 @@ Menu esquerdo: Realm roles > Create role
 
 ## Passo 5: Criar Usuarios de Teste
 
-### 5.1 - Criar usuario
+### 5.1 - Criar usuarios
 
-```
-Menu esquerdo: Users > Add user
+Criar os seguintes usuários via **Users > Add user**:
 
-Username:       dev.user
-Email:          dev.user@fincontrol.local
-Email verified: [x]
-First name:     Dev
-Last name:      User
-Enabled:        [x]
-```
+| Username | Email | First Name | Last Name | Password | Role |
+|----------|-------|------------|-----------|----------|------|
+| `admin.fincontrol` | `admin@fincontrol.local` | Admin | FinControl | `Admin@123456` | `fincontrol-admin` |
+| `user.fincontrol` | `user@fincontrol.local` | User | FinControl | `User@123456` | `fincontrol-user` |
+| `contador.fincontrol` | `contador@fincontrol.local` | Contador | FinControl | `Contador@123456` | `fincontrol-accountant` |
 
-### 5.2 - Definir senha
-
-```
-Aba: Credentials > Set password
-Password:   Dev@123456!
-Temporary:  [ ] (desmarcar)
-```
-
-### 5.3 - Atribuir roles
-
-```
-Aba: Role mapping > Assign role
-Selecionar: api-user
-```
-
-Repetir para `dev.admin` com password `Admin@123456!` e roles `api-user` + `admin`.
+Para cada usuário:
+1. Criar em **Users > Add user** com `Email verified: [x]` e `Enabled: [x]`
+2. Definir senha em **Credentials > Set password** com `Temporary: [ ]` (desmarcado)
+3. Atribuir role em **Role mapping > Assign role**
 
 ---
 
@@ -135,7 +120,7 @@ curl -s -X POST http://localhost:8081/realms/fincontrol/protocol/openid-connect/
 ```bash
 curl -s -X POST http://localhost:8081/realms/fincontrol/protocol/openid-connect/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=fincontrol-api&client_secret=fincontrol-api-secret&grant_type=password&username=dev.user&password=Dev@123456!" | jq .access_token
+  -d "client_id=fincontrol-backend&client_secret=fincontrol-backend-secret-12345&grant_type=password&username=admin.fincontrol&password=Admin@123456" | jq .access_token
 ```
 
 ---
@@ -143,10 +128,10 @@ curl -s -X POST http://localhost:8081/realms/fincontrol/protocol/openid-connect/
 ## Checklist de Configuracao
 
 - [ ] Realm "fincontrol" criado
-- [ ] Cliente "fincontrol-api" criado com client authentication + direct access grants
-- [ ] Client secret salvo no Vault (`secret/dev/keycloak → api_client_secret`)
-- [ ] Roles `api-user` e `admin` criadas
-- [ ] Usuarios `dev.user` e `dev.admin` criados com senhas permanentes
+- [ ] Cliente "fincontrol-backend" criado com client authentication + direct access grants
+- [ ] Client secret definido como `fincontrol-backend-secret-12345` e salvo no Vault (`secret/dev/keycloak → api_client_secret`)
+- [ ] Roles `fincontrol-admin`, `fincontrol-user` e `fincontrol-accountant` criadas
+- [ ] Usuários `admin.fincontrol`, `user.fincontrol` e `contador.fincontrol` criados com senhas permanentes
 - [ ] JWKS retornando chave RS256 (`/realms/fincontrol/protocol/openid-connect/certs`)
 - [ ] Token JWT obtido com sucesso e validado pelo Kong
 

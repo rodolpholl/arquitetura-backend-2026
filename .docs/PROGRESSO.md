@@ -14,7 +14,7 @@
 | Serviço de consolidado diário | ✅ | `GET /consolidados/saldo` — Consolidado.API |
 | Desenho da solução | ✅ | [ARQUITETURA.md](ARQUITETURA.md) + diagrama `.docs/*.drawio.png` |
 | Implementado em C# | ✅ | .NET 10 / ASP.NET Core 10 |
-| Testes automatizados | ✅ | 64 testes (xUnit + Moq + Bogus + FluentAssertions) |
+| Testes automatizados | ✅ | 83 testes (xUnit + Moq + Bogus + FluentAssertions) |
 | Boas práticas (SOLID, Design Patterns, Arquitetura) | ✅ | Vertical Slice, CQRS, DDD, Outbox, Idempotência |
 | README com instruções de execução | ✅ | [../README.md](../README.md) |
 | Repositório público (GitHub) | ✅ | Disponível no GitHub |
@@ -60,7 +60,8 @@
 | **Prometheus /metrics** | `prometheus-net` expõe métricas nas duas APIs |
 | **OpenTelemetry** | Traces exportados via OTLP → Jaeger |
 | **Serilog** | Logs estruturados + Grafana Loki + CorrelationId enriquecido |
-| **Testes unitários** | 64 testes: 48 (Lançamentos) + 16 (Consolidado), zero falhas |
+| **Testes unitários** | 83 testes: 48 (Lançamentos) + 35 (Consolidado), zero falhas |
+| **Testes funcionais (regras de negócio)** | 12 testes em `ConsolidadoRegrasDenegocioTests` cobrindo crédito, débito, fallback, retroativo e precisão monetária |
 | **Stress Tests** | NBomber 5.5.0 — 50 req/s (Consolidado) + 10 req/s (Lançamentos) em paralelo; JWT auto-fetch do Keycloak; relatórios HTML + Markdown |
 
 ---

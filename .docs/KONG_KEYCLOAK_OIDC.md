@@ -109,11 +109,11 @@ Resultado esperado:
 TOKEN=$(curl -s -X POST \
   http://localhost:8081/realms/fincontrol/protocol/openid-connect/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=fincontrol-api" \
-  -d "client_secret=fincontrol-api-secret" \
+  -d "client_id=fincontrol-backend" \
+  -d "client_secret=fincontrol-backend-secret-12345" \
   -d "grant_type=password" \
-  -d "username=dev.user" \
-  -d "password=Dev@123456!" \
+  -d "username=admin.fincontrol" \
+  -d "password=Admin@123456" \
   | jq -r '.access_token')
 ```
 

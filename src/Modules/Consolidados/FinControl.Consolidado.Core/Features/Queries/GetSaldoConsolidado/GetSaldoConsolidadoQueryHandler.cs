@@ -1,88 +1,83 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using FinControl.Consolidado.Core.Domain;
 using FinControl.Infrastructure.Cache;
 using Microsoft.Extensions.Logging;
 
 namespace FinControl.Consolidado.Core.Features.Queries.GetSaldoConsolidado;
 
-    public class GetSaldoConsolidadoQueryHandler(
+public sealed class GetSaldoConsolidadoQueryHandler(
     RedisCacheService cache,
-    ILogger<GetSaldoConsolidadoQueryHandler> logger
-    )
+    ILogger<GetSaldoConsolidadoQueryHandler> logger)
 {
-    private static string _cacheKeyTotalAcumoulado = $"saldo:consolidado:acumulado";
-    
+    private const string CACHE_KEY_ACUMULADO = "saldo:consolidado:acumulado";
+    private const int MAX_LOOKBACK_DAYS = 30;
+
     private static string CacheKey(DateOnly data) => $"saldo:consolidado:{data:yyyy-MM-dd}";
 
-    public async Task<GetSaldoConsolidadoResponse> Handle(GetSaldoConsolidadoQuery request, CancellationToken cancellationToken)
+    public async Task<GetSaldoConsolidadoResponse> Handle(
+        GetSaldoConsolidadoQuery request,
+        CancellationToken cancellationToken)
     {
+        if (!request.DataLancamento.HasValue)
+            return await GetAcumuladoAsync(cancellationToken);
 
-        if(!request.DataLancamento.HasValue)
-        {
+        return await GetPorDataAsync(request.DataLancamento.Value, cancellationToken);
+    }
 
-            var saldoAcumulado = await cache.GetAsync<SaldoConsolidado>(_cacheKeyTotalAcumoulado, cancellationToken);
-            return new GetSaldoConsolidadoResponse(
-                Saldo: saldoAcumulado?.Saldo ?? 0,
-                UltimaAtualizacao: saldoAcumulado?.UltimaAtualizacao ?? DateTimeOffset.UtcNow.UtcDateTime
-            );
+    private async Task<GetSaldoConsolidadoResponse> GetAcumuladoAsync(CancellationToken ct)
+    {
+        var saldo = await cache.GetAsync<SaldoConsolidado>(CACHE_KEY_ACUMULADO, ct);
+        return new GetSaldoConsolidadoResponse(
+            Saldo: saldo?.Saldo ?? 0,
+            UltimaAtualizacao: saldo?.UltimaAtualizacao ?? DateTimeOffset.UtcNow);
+    }
 
-        }
+    private async Task<GetSaldoConsolidadoResponse> GetPorDataAsync(
+        DateOnly dataRequisitada,
+        CancellationToken ct)
+    {
+        var keyRequisitada = CacheKey(dataRequisitada);
+        var saldo = await cache.GetAsync<SaldoConsolidado>(keyRequisitada, ct);
 
-
-        var data = DateOnly.FromDateTime(request.DataLancamento?.ToDateTime(new TimeOnly(0, 0)) ?? DateTimeOffset.UtcNow.UtcDateTime);
-        var key = CacheKey(data);
-
-
-        
-        var saldoConsolidado = await cache.GetAsync<SaldoConsolidado>(key, cancellationToken);
-
-        if (saldoConsolidado is null)
-        {
-
-            for (int i = 0; i < 30; i++)
-            {
-                data = data.AddDays(-1);
-                key = CacheKey(data);
-
-                if (logger.IsEnabled(LogLevel.Warning))
-                    logger.LogWarning(
-                        "Saldo consolidado não encontrado no cache. buscando o saldo anterior para inicialização do dia | Data={Data} Tentativa={Tentativa} CacheKey={CacheKey}",
-                        data,
-                        i + 1,
-                        key);
-
-                await Task.Delay(100, cancellationToken);
-                saldoConsolidado = await cache.GetAsync<SaldoConsolidado>(key, cancellationToken);
-
-                if (saldoConsolidado is not null)
-                {
-                    await cache.SetAsync(CacheKey(DateOnly.FromDateTime(request.DataLancamento?.ToDateTime(new TimeOnly(0, 0)) ?? DateTimeOffset.UtcNow.UtcDateTime)), saldoConsolidado, TimeSpan.FromDays(30), cancellationToken);
-                    break;
-                }
-                else
-                    saldoConsolidado = new SaldoConsolidado(0, DateTimeOffset.UtcNow);
-            }
-
-            
-        }
-        
-
-        GetSaldoConsolidadoResponse result = new(
-            Saldo: saldoConsolidado?.Saldo ?? 0,
-            UltimaAtualizacao: saldoConsolidado?.UltimaAtualizacao ?? DateTimeOffset.UtcNow.UtcDateTime
-        );
+        if (saldo is null)
+            saldo = await BuscarSaldoAnteriorAsync(dataRequisitada, keyRequisitada, ct);
 
         if (logger.IsEnabled(LogLevel.Information))
             logger.LogInformation(
                 "Saldo consolidado retornado | Saldo={Saldo} UltimaAtualizacao={UltimaAtualizacao} CacheKey={CacheKey}",
-                result.SaldoDecimal,
-                result.UltimaAtualizacao,
-                key);
-            
-        return result;
+                saldo.Saldo,
+                saldo.UltimaAtualizacao,
+                keyRequisitada);
+
+        return new GetSaldoConsolidadoResponse(saldo.Saldo, saldo.UltimaAtualizacao);
     }
 
+    private async Task<SaldoConsolidado> BuscarSaldoAnteriorAsync(
+        DateOnly dataRequisitada,
+        string keyRequisitada,
+        CancellationToken ct)
+    {
+        for (int i = 1; i <= MAX_LOOKBACK_DAYS; i++)
+        {
+            var dataAnterior = dataRequisitada.AddDays(-i);
+            var saldo = await cache.GetAsync<SaldoConsolidado>(CacheKey(dataAnterior), ct);
+
+            if (saldo is not null)
+            {
+                if (logger.IsEnabled(LogLevel.Information))
+                    logger.LogInformation(
+                        "Saldo encontrado em data anterior | DataRequisitada={DataRequisitada} DataEncontrada={DataEncontrada} Tentativa={Tentativa}",
+                        dataRequisitada, dataAnterior, i);
+
+                // Propaga para a data requisitada para acelerar consultas futuras ao mesmo dia
+                await cache.SetAsync(keyRequisitada, saldo, TimeSpan.FromDays(30), ct);
+                return saldo;
+            }
+        }
+
+        logger.LogWarning(
+            "Nenhum saldo encontrado nos últimos {MaxDias} dias anteriores a {Data}. Retornando saldo zero.",
+            MAX_LOOKBACK_DAYS, dataRequisitada);
+
+        return new SaldoConsolidado(0, DateTimeOffset.UtcNow);
+    }
 }
