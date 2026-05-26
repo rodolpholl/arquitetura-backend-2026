@@ -10,6 +10,7 @@ public class AtualizarSaldoConsolidadoCommandHandler(
     ILogger<AtualizarSaldoConsolidadoCommandHandler> logger)
 {
     private static string CacheKey(DateOnly data) => $"saldo:consolidado:{data:yyyy-MM-dd}";
+    private static string _cacheKeyTotalAcumoulado = $"saldo:consolidado:acumulado";
     private static string LockKey(DateOnly data) => $"lock:saldo:consolidado:{data:yyyy-MM-dd}";
 
     public async Task Handle(
@@ -24,11 +25,22 @@ public class AtualizarSaldoConsolidadoCommandHandler(
             lockKey: LockKey(data),
             action: async () =>
             {
+
+                //Atualizandoo saldo Acumulado
+                var keyTotalAcumulado = await cache.GetAsync<SaldoConsolidado>(_cacheKeyTotalAcumoulado, cancellationToken);
+
+                var valorSaldoConsolidado = (keyTotalAcumulado?.Saldo ?? 0) + command.ValorLancamento;
+
+                await cache.SetAsync(_cacheKeyTotalAcumoulado, new SaldoConsolidado(
+                    Saldo: valorSaldoConsolidado,
+                    UltimaAtualizacao: DateTimeOffset.UtcNow), null, cancellationToken);
+
+                //Atualizando o saldo do dia para consultas para mm dia específico.
                 var atual = await cache.GetAsync<SaldoConsolidado>(key, cancellationToken);
 
                 var saldoAnterior = atual?.Saldo ?? 0;
                 var novoSaldo = new SaldoConsolidado(
-                    Saldo: saldoAnterior + command.ValorLancamento,
+                    Saldo: valorSaldoConsolidado,
                     UltimaAtualizacao: DateTimeOffset.UtcNow);
 
                 await cache.SetAsync(key, novoSaldo, TimeSpan.FromDays(30), cancellationToken);

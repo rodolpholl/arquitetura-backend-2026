@@ -221,7 +221,7 @@ curl -X POST http://localhost:8001/services/fincontrol-consolidados/plugins \
 |----------|---------|
 | `No API key found in request` | O JWT está ausente ou malformado no header `Authorization` |
 | `Invalid signature` | Chave pública registrada no Kong não corresponde ao issuer do token |
-| `Unauthorized` (401) | Token expirado (TTL padrão Keycloak: 300s) — renove o token |
+| `Unauthorized` (401) | Token expirado (TTL: 300s) — use o `refresh_token` para renovar (ver [REFRESH_TOKEN_FLOW.md](REFRESH_TOKEN_FLOW.md)) |
 | `403 Rate limit exceeded` | Aguarde ou ajuste `config.minute`/`config.second` no plugin |
 | kong-init falhou | `docker-compose logs kong-init` para diagnóstico |
 | JWKS não disponível | Verificar se Keycloak está healthy: `http://localhost:8081/health/ready` |
@@ -236,6 +236,7 @@ curl -X POST http://localhost:8001/services/fincontrol-consolidados/plugins \
 - [Keycloak JWKS](https://www.keycloak.org/docs/latest/securing_apps/#_certificate_endpoint)
 - [KEYCLOAK_SETUP_GUIDE.md](KEYCLOAK_SETUP_GUIDE.md)
 - [KONG_KEYCLOAK_TESTS.md](KONG_KEYCLOAK_TESTS.md)
+- [REFRESH_TOKEN_FLOW.md](REFRESH_TOKEN_FLOW.md) — ciclo de vida dos tokens e fluxo de refresh no cliente
 
 ---
 

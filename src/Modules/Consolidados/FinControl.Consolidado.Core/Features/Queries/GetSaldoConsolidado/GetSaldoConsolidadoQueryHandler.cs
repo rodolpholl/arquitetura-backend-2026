@@ -13,12 +13,25 @@ namespace FinControl.Consolidado.Core.Features.Queries.GetSaldoConsolidado;
     ILogger<GetSaldoConsolidadoQueryHandler> logger
     )
 {
+    private static string _cacheKeyTotalAcumoulado = $"saldo:consolidado:acumulado";
+    
     private static string CacheKey(DateOnly data) => $"saldo:consolidado:{data:yyyy-MM-dd}";
 
     public async Task<GetSaldoConsolidadoResponse> Handle(GetSaldoConsolidadoQuery request, CancellationToken cancellationToken)
     {
 
-        var dataAtual = DateOnly.FromDateTime(DateTimeOffset.UtcNow.UtcDateTime);
+        if(!request.DataLancamento.HasValue)
+        {
+
+            var saldoAcumulado = await cache.GetAsync<SaldoConsolidado>(_cacheKeyTotalAcumoulado, cancellationToken);
+            return new GetSaldoConsolidadoResponse(
+                Saldo: saldoAcumulado?.Saldo ?? 0,
+                UltimaAtualizacao: saldoAcumulado?.UltimaAtualizacao ?? DateTimeOffset.UtcNow.UtcDateTime
+            );
+
+        }
+
+
         var data = DateOnly.FromDateTime(request.DataLancamento?.ToDateTime(new TimeOnly(0, 0)) ?? DateTimeOffset.UtcNow.UtcDateTime);
         var key = CacheKey(data);
 
@@ -49,12 +62,13 @@ namespace FinControl.Consolidado.Core.Features.Queries.GetSaldoConsolidado;
                     await cache.SetAsync(CacheKey(DateOnly.FromDateTime(request.DataLancamento?.ToDateTime(new TimeOnly(0, 0)) ?? DateTimeOffset.UtcNow.UtcDateTime)), saldoConsolidado, TimeSpan.FromDays(30), cancellationToken);
                     break;
                 }
+                else
+                    saldoConsolidado = new SaldoConsolidado(0, DateTimeOffset.UtcNow);
             }
-        }
-        else
-            saldoConsolidado = new SaldoConsolidado(0, DateTimeOffset.UtcNow);
-        
 
+            
+        }
+        
 
         GetSaldoConsolidadoResponse result = new(
             Saldo: saldoConsolidado?.Saldo ?? 0,
