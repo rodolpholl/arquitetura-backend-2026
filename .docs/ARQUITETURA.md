@@ -1109,7 +1109,7 @@ services:
       - kong_data:/var/lib/postgresql/data
 
   kong:
-    image: kong:3.4
+    image: kong:3.8
     container_name: kong
     environment:
       KONG_DATABASE: postgres
@@ -1135,7 +1135,7 @@ services:
       retries: 5
 
   kong-migrations:
-    image: kong:3.4
+    image: kong:3.8
     command: kong migrations bootstrap
     environment:
       KONG_DATABASE: postgres
@@ -1583,19 +1583,20 @@ Requisição GET /saldo/2026-05-20
 
 ```
 WAF & Firewall:      ModSecurity 3.0+ (OWASP Top 10 protection)
-API Gateway:         Kong 3.4
+API Gateway:         Kong 3.8
                      ├─ jwt plugin: valida RS256 com chave pública do Keycloak
                      ├─ request-transformer: injeta X-Subscription-Key no upstream
                      ├─ proxy-cache: cache GET por 30s (Consolidado)
                      └─ rate-limiting: 300 req/min (Lancamentos), 55 req/s (Consolidado)
-Database:            PostgreSQL 16 (Alpine)
-Cache:               Redis 7 Alpine (StackExchange.Redis)
-Message Bus:         RabbitMQ 3.12 Management Alpine
+Database:            PostgreSQL 17 (Alpine)
+Cache:               Redis 7.4 Alpine (StackExchange.Redis)
+Message Bus:         RabbitMQ 3.13 Management Alpine
                      └─ Exchange: lancamentos.events (topic, durable)
-Secrets Management:  HashiCorp Vault 1.15 (KV v2, dev mode)
+Secrets Management:  HashiCorp Vault 1.18 (KV v2, dev mode)
 Identity Provider:   Keycloak latest (SSO, OAuth2, OIDC, realm fincontrol)
-Observability:       OpenTelemetry + prometheus-net + Serilog + Jaeger
-Dashboard:           Grafana 11.1.0 (dashboard HTTP provisionado via JSON)
+Observability:       OpenTelemetry + prometheus-net + Serilog + Jaeger + Loki
+Dashboard:           Grafana 11.4.0 (dashboard HTTP provisionado via JSON)
+Log Aggregation:     Grafana Loki 3.3.0 (sink Serilog → Loki → Grafana)
 Metrics:             Prometheus (scraping /metrics das APIs)
 Tracing:             Jaeger all-in-one (OTLP gRPC 4317 + HTTP 4318)
 Container:           Docker + Docker Compose (dev/prod)
@@ -2906,7 +2907,7 @@ services:
 
   # Kong API Gateway
   kong:
-    image: kong:3.4-alpine
+    image: kong:3.8
     container_name: kong-gateway
     depends_on:
       - kong-db
@@ -2940,7 +2941,7 @@ services:
 
   # Redis para cache e rate limiting distribuído
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: redis-cache
     ports:
       - "6379:6379"
@@ -2964,7 +2965,7 @@ services:
 
   # RabbitMQ - event bus
   rabbitmq:
-    image: rabbitmq:3.12-management-alpine
+    image: rabbitmq:3.13-management-alpine
     container_name: rabbitmq-broker
     ports:
       - "5672:5672"
@@ -3085,7 +3086,7 @@ var connectionString = await keyVaultClient.GetSecretAsync("db-connection-string
 
 ```yaml
 vault:
-  image: vault:1.15
+  image: hashicorp/vault:1.18
   container_name: vault-secrets
   ports:
     - "8200:8200"

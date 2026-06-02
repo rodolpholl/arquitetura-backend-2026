@@ -4,17 +4,18 @@ Infraestrutura completa para desenvolvimento local com PostgreSQL, Redis, Rabbit
 
 ## Servicos
 
-| Servico | Porta | Credenciais |
-|---------|-------|-------------|
-| **PostgreSQL** | 5432 | fincontrol_admin / fincontrol_dev_password_123 |
-| **Redis** | 6379 | password: fincontrol_redis_password_123 |
-| **RabbitMQ** | 5672 / 15672 | fincontrol_user / fincontrol_rabbitmq_password_123 |
-| **Vault** | 8200 | Token: fincontrol_dev_token_12345 |
-| **Keycloak** | 8081 | admin / fincontrol_keycloak_password_123 |
-| **Kong** | 8000 / 8001 / 8002 | — (Admin API sem auth em dev) |
-| **Jaeger** | 16686 | — |
-| **Prometheus** | 9090 | — |
-| **Grafana** | 3000 | admin / fincontrol_grafana_password_123 |
+| Servico | Imagem | Porta | Credenciais |
+|---------|--------|-------|-------------|
+| **PostgreSQL** | `postgres:17-alpine` | 5432 | fincontrol_admin / fincontrol_dev_password_123 |
+| **Redis** | `redis:7.4-alpine` | 6379 | password: fincontrol_redis_password_123 |
+| **RabbitMQ** | `rabbitmq:3.13-management-alpine` | 5672 / 15672 | fincontrol_user / fincontrol_rabbitmq_password_123 |
+| **Vault** | `hashicorp/vault:1.18` | 8200 | Token: fincontrol_dev_token_12345 |
+| **Keycloak** | `keycloak/keycloak:latest` | 8081 | admin / fincontrol_keycloak_password_123 |
+| **Kong** | `kong:3.8` | 8000 / 8001 / 8002 | — (Admin API sem auth em dev) |
+| **Jaeger** | `jaegertracing/all-in-one:latest` | 16686 | — |
+| **Loki** | `grafana/loki:3.3.0` | 3100 | — |
+| **Prometheus** | `prom/prometheus:latest` | 9090 | — |
+| **Grafana** | `grafana/grafana:11.4.0` | 3000 | admin / fincontrol_grafana_password_123 |
 
 ## Quick Start
 
@@ -42,6 +43,7 @@ Os containers de infra devem estar `healthy`. Os containers de init (`vault-init
 - **Kong Manager:** http://localhost:8002
 - **Prometheus:** http://localhost:9090
 - **Jaeger:** http://localhost:16686
+- **Loki:** http://localhost:3100 — (API interna; acesso via Grafana)
 - **Grafana:** http://localhost:3000 — admin / fincontrol_grafana_password_123
 
 ### 4. Iniciar as APIs .NET
@@ -105,10 +107,10 @@ Essas connection strings sao injetadas automaticamente pelo Vault via `vault-ini
 docker-compose up -d
         |
         v
-  PostgreSQL, Redis, RabbitMQ, Vault, Jaeger, Prometheus  (Fase 1 — infra)
+  PostgreSQL, Redis, RabbitMQ, Vault, Jaeger, Prometheus, Loki  (Fase 1 — infra)
         |
         v
-  Keycloak, Kong, Grafana                                  (Fase 2 — plataforma)
+  Keycloak, Kong, Grafana                                       (Fase 2 — plataforma)
         |
         v
   vault-init     → cria secrets em secret/dev/*             (Exit 0)
