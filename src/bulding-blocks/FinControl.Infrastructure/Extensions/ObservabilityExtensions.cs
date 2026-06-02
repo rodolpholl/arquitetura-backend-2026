@@ -58,14 +58,6 @@ public static class ObservabilityExtensions
                 })
                 .AddOtlpExporter(opts => opts.Endpoint = new Uri(otlpEndpoint)));
 
-        // --- Prometheus Metrics (prometheus-net) ---
-        // Coleta métricas padrão do runtime .NET (GC, threads, HTTP, etc.)
-        builder.Services.AddMetricServer(options =>
-        {
-            // Não sobe servidor separado — usa o endpoint /metrics do próprio ASP.NET
-            options.Port = 0;
-        });
-
         return builder;
     }
 

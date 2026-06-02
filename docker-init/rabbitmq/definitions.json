@@ -1,6 +1,6 @@
 {
-  "rabbit_version": "3.12.0",
-  "rabbitmq_version": "3.12.0",
+  "rabbit_version": "3.13.0",
+  "rabbitmq_version": "3.13.0",
   "users": [
     {
       "name": "fincontrol_user",
@@ -24,20 +24,7 @@
     }
   ],
   "topic_permissions": [],
-  "policies": [
-    {
-      "vhost": "/fincontrol",
-      "name": "ha-all",
-      "pattern": "^(?!amq\\.).*",
-      "apply-to": "queues",
-      "definition": {
-        "ha-mode": "all",
-        "ha-sync-batch-size": 5,
-        "ha-sync-mode": "automatic"
-      },
-      "priority": 0
-    }
-  ],
+  "policies": [],
   "queues": [
     {
       "name": "lancamentos.registered",

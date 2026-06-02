@@ -2,7 +2,7 @@ services:
   # PostgreSQL - Banco de dados transacional único
   # Suporta múltiplos databases e schemas para diferentes serviços
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: fincontrol-postgres
     environment:
       POSTGRES_USER: fincontrol_admin
@@ -36,7 +36,7 @@ services:
 
   # Redis - Cache distribuído
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: fincontrol-redis
     command: redis-server --appendonly yes --requirepass fincontrol_redis_password_123
     ports:
@@ -64,7 +64,7 @@ services:
 
   # RabbitMQ - Message Broker nativo do Wolverine
   rabbitmq:
-    image: rabbitmq:3.12-management-alpine
+    image: rabbitmq:3.13-management-alpine
     container_name: fincontrol-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: fincontrol_user
@@ -97,7 +97,7 @@ services:
 
   # HashiCorp Vault - Secrets Management (Dev Mode)
   vault:
-    image: hashicorp/vault:1.15
+    image: hashicorp/vault:1.18
     container_name: fincontrol-vault
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: fincontrol_dev_token_12345
@@ -132,7 +132,7 @@ services:
 
   # Vault Init - Inicializa secrets no Vault após startup
   vault-init:
-    image: alpine:3.19
+    image: alpine:3.21
     container_name: fincontrol-vault-init
     depends_on:
       vault:
@@ -195,6 +195,36 @@ services:
           cpus: '0.5'
           memory: 256M
 
+  # Grafana Loki - Agregação de Logs
+  loki:
+    image: grafana/loki:3.3.0
+    container_name: fincontrol-loki
+    command: -config.file=/etc/loki/loki-config.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./docker-init/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    networks:
+      - fincontrol-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
   # Prometheus - Coleta de Métricas
   prometheus:
     image: prom/prometheus:latest
@@ -230,7 +260,7 @@ services:
 
   # Grafana - Dashboards de Visualização
   grafana:
-    image: grafana/grafana:11.1.0
+    image: grafana/grafana:11.4.0
     container_name: fincontrol-grafana
     environment:
       GF_SECURITY_ADMIN_PASSWORD: fincontrol_grafana_password_123
@@ -244,6 +274,8 @@ services:
       - fincontrol-network
     depends_on:
       prometheus:
+        condition: service_healthy
+      loki:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
@@ -314,7 +346,7 @@ services:
 
   # Kong - API Gateway (Rate Limiting, Authentication, Routing)
   kong:
-    image: kong:3.4
+    image: kong:3.8
     container_name: fincontrol-kong
     environment:
       KONG_DATABASE: postgres
@@ -362,7 +394,7 @@ services:
 
   # Keycloak-Init - Configura Realm, Clients, Roles e Usuários no Keycloak
   keycloak-init:
-    image: alpine:3.19
+    image: alpine:3.21
     container_name: fincontrol-keycloak-init
     depends_on:
       keycloak:
@@ -400,7 +432,7 @@ services:
 
   # Kong-Init - Configurar Kong com Keycloak OIDC
   kong-init:
-    image: alpine:3.19
+    image: alpine:3.21
     container_name: fincontrol-kong-init
     depends_on:
       kong:
@@ -429,6 +461,8 @@ services:
         max-file: "3"
 
 volumes:
+  loki_data:
+    driver: local
   redis_data:
     driver: local
   rabbitmq_data:

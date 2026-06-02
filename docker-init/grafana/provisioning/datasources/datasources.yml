@@ -10,3 +10,18 @@ datasources:
     editable: true
     jsonData:
       timeInterval: 15s
+
+  - name: Loki
+    uid: fincontrol-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: false
+    editable: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - datasourceUid: fincontrol-prometheus
+          matcherRegex: '"TraceId":"(\w+)"'
+          name: TraceId
+          url: '$${__value.raw}'

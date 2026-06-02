@@ -1,9 +1,9 @@
 {
   "uid": "fincontrol-http-v1",
-  "title": "FinControl — HTTP Requests",
-  "tags": ["fincontrol", "http"],
+  "title": "FinControl — HTTP Requests & Logs",
+  "tags": ["fincontrol", "http", "logs"],
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "timezone": "browser",
   "time": { "from": "now-1h", "to": "now" },
@@ -23,6 +23,25 @@
         "allValue": ".*",
         "refresh": 2,
         "sort": 1
+      },
+      {
+        "name": "log_level",
+        "label": "Nível de Log",
+        "type": "custom",
+        "query": "All,Verbose,Debug,Information,Warning,Error,Fatal",
+        "current": { "text": "All", "value": "" },
+        "options": [
+          { "text": "All",         "value": "" },
+          { "text": "Verbose",     "value": "| json | @l = `Verbose`" },
+          { "text": "Debug",       "value": "| json | @l = `Debug`" },
+          { "text": "Information", "value": "| json | @l = `Information`" },
+          { "text": "Warning",     "value": "| json | @l = `Warning`" },
+          { "text": "Error",       "value": "| json | @l = `Error`" },
+          { "text": "Fatal",       "value": "| json | @l = `Fatal`" }
+        ],
+        "multi": false,
+        "includeAll": false,
+        "refresh": 0
       }
     ]
   },
@@ -88,8 +107,8 @@
             "mode": "absolute",
             "steps": [
               { "value": null, "color": "green" },
-              { "value": 1, "color": "yellow" },
-              { "value": 5, "color": "red" }
+              { "value": 1,    "color": "yellow" },
+              { "value": 5,    "color": "red" }
             ]
           }
         }
@@ -122,8 +141,8 @@
             "mode": "absolute",
             "steps": [
               { "value": null, "color": "green" },
-              { "value": 0.5, "color": "yellow" },
-              { "value": 1, "color": "red" }
+              { "value": 0.5,  "color": "yellow" },
+              { "value": 1,    "color": "red" }
             ]
           }
         }
@@ -328,6 +347,195 @@
           }
         }
       ]
+    },
+
+    {
+      "id": 20,
+      "title": "Logs",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 28, "w": 24, "h": 1 }
+    },
+    {
+      "id": 21,
+      "title": "Erros (Error / Fatal)",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 29, "w": 4, "h": 4 },
+      "datasource": { "type": "loki", "uid": "fincontrol-loki" },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({service=~\"$service\"} | json | @l =~ `Error|Fatal` [$__range]))",
+          "refId": "A",
+          "legendFormat": "erros"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["sum"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 1,    "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 22,
+      "title": "Warnings",
+      "type": "stat",
+      "gridPos": { "x": 4, "y": 29, "w": 4, "h": 4 },
+      "datasource": { "type": "loki", "uid": "fincontrol-loki" },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({service=~\"$service\"} | json | @l = `Warning` [$__range]))",
+          "refId": "A",
+          "legendFormat": "warnings"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["sum"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 1,    "color": "yellow" },
+              { "value": 50,   "color": "orange" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 23,
+      "title": "Total de Logs",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 29, "w": 4, "h": 4 },
+      "datasource": { "type": "loki", "uid": "fincontrol-loki" },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({service=~\"$service\"}[$__range]))",
+          "refId": "A",
+          "legendFormat": "total"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["sum"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "blue" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 24,
+      "title": "Volume de Logs por Nível",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 29, "w": 12, "h": 4 },
+      "datasource": { "type": "loki", "uid": "fincontrol-loki" },
+      "targets": [
+        {
+          "expr": "sum by (@l) (count_over_time({service=~\"$service\"} | json [$__interval]))",
+          "refId": "A",
+          "legendFormat": "{{@l}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 10, "drawStyle": "bars", "barAlignment": 0 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "Error|Fatal" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Warning" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Information" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 25,
+      "title": "Logs de Erro e Fatal",
+      "type": "logs",
+      "gridPos": { "x": 0, "y": 33, "w": 24, "h": 10 },
+      "datasource": { "type": "loki", "uid": "fincontrol-loki" },
+      "targets": [
+        {
+          "expr": "{service=~\"$service\"} | json | @l =~ `Error|Fatal`",
+          "refId": "A",
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": false,
+        "showCommonLabels": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 26,
+      "title": "Todos os Logs",
+      "type": "logs",
+      "gridPos": { "x": 0, "y": 43, "w": 24, "h": 12 },
+      "datasource": { "type": "loki", "uid": "fincontrol-loki" },
+      "targets": [
+        {
+          "expr": "{service=~\"$service\"}$log_level",
+          "refId": "A",
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      },
+      "transformations": []
     }
   ]
 }

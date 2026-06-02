@@ -113,7 +113,11 @@ var app = builder.Build();
 
 // ==================== MIDDLEWARES HTTP ====================
 
-// 1. Request Logging (Serilog) — DEVE SER PRIMEIRO para capturar latência total
+// 1. CorrelationId — DEVE SER PRIMEIRO: popula HttpContext.Items["X-Correlation-Id"]
+//    usado por SubscriptionKeyMiddleware, GlobalExceptionHandler e SerilogRequestLogging
+app.UseMiddleware<CorrelationIdMiddleware>();
+
+// 2. Request Logging (Serilog) — após CorrelationId para capturar o ID nos logs
 try
 {
     app.UseFinControlRequestLogging();
@@ -147,9 +151,9 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // ==================== HEALTH CHECKS ====================
-// Endpoints: /health (liveness), /health/ready (readiness)
-app.MapHealthChecks("/health");
-app.MapHealthChecks("/health/ready");
+// /health      → liveness  (sem checks, só confirma que o processo está vivo)
+// /health/ready → readiness (executa checks com tag "ready": postgres, redis, rabbitmq)
+app.MapFinControlHealthChecks();
 
 // ==================== ENDPOINTS ====================
 
